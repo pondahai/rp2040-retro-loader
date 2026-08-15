@@ -5,8 +5,9 @@
  * framebuffer 是 150KB,而且 DMA 留在半路上會弄髒交棒後的專題。
  * 每個字元直接 blocking 送 128 bytes 出去,慢但夠用,而且省 flash 也省 RAM。
  */
-#ifndef LCD_H
-#define LCD_H
+/* 注意: 不能用 LCD_H 當 guard —— board.h 拿它當螢幕高度 */
+#ifndef LOADER_LCD_H
+#define LOADER_LCD_H
 
 #include <stdint.h>
 
@@ -32,4 +33,4 @@ void lcd_puts(int col, int row, const char *s, uint16_t fg, uint16_t bg);
 /* 把整列先填滿 bg 再寫字,用來畫光棒與清掉上一次的殘字。 */
 void lcd_puts_line(int row, const char *s, uint16_t fg, uint16_t bg);
 
-#endif /* LCD_H */
+#endif /* LOADER_LCD_H */

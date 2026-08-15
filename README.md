@@ -34,26 +34,55 @@ RP2040 掌機的開機載入器。冷開機進選單，列出 SD 卡上的 `.uf2
 
 ## 2. 編譯
 
-需要 pico-sdk（1.5 以上）。
+### 2.1 環境
+
+實際驗證過的組合（VS Code 的 Raspberry Pi Pico 擴充套件裝在 `~/.pico-sdk/` 底下就有這些）：
+
+| 元件 | 版本 |
+|---|---|
+| pico-sdk | 2.2.0 |
+| GCC arm-none-eabi | 14.2.1（`toolchain/14_2_Rel1`） |
+| CMake | 3.31.5 |
+| Ninja | 1.12.1 |
+| picotool | 2.2.0-a4 |
+
+SDK 1.x 沒有測過。`app/memmap_app.ld` 是從 2.2.0 的 `memmap_default.ld` 生成的，換版本要重跑 `tools/gen_app_ld.py`（見 §3.1）。
+
+### 2.2 指令
+
+Windows（Git Bash / PowerShell 皆可，路徑照抄）：
 
 ```bash
-cmake -B build -DPICO_SDK_PATH=/path/to/pico-sdk
-cmake --build build
+P="$HOME/.pico-sdk"
+cmake -B build -G Ninja \
+  -DPICO_SDK_PATH="$P/sdk/2.2.0" \
+  -DPICO_TOOLCHAIN_PATH="$P/toolchain/14_2_Rel1" \
+  -DCMAKE_MAKE_PROGRAM="$P/ninja/v1.12.1/ninja.exe" \
+  -Dpicotool_DIR="$P/picotool/2.2.0-a4/picotool" \
+  -Dpioasm_DIR="$P/tools/2.2.0/pioasm"
 ```
 
-產出：
+```bash
+ninja -C build
+```
+
+`PICO_SDK_PATH` 不指定的話會退回 `../../pico-sdk`，也就是假設倉庫旁邊有一份 pico-sdk clone。多數情況你會需要明確指定。
+
+### 2.3 產出與大小
 
 - `build/loader.uf2` — 載入器，用 USB BOOTSEL 燒進 Pico
 - `build/trampoline.uf2` — 跳板，給合併工具用，不會單獨燒
 
-build 過程會印出兩者的大小：
+build 過程會印出兩者的大小（以下是實測值，非估計）：
 
 ```
--- loader: 12480 / 16384 bytes (76%, 剩 3904)
--- trampoline: 3216 / 16384 bytes (19%, 剩 13168)
+-- loader: 13544 / 16384 bytes (82%, 剩 2840)
+-- trampoline: 5536 / 16384 bytes (33%, 剩 10848)
 ```
 
 超過 16KB 的話 **build 會直接失敗**（`tools/check_size.cmake`）。這是刻意的——超出去只會蓋到專題本體，症狀是「燒進去之後開機沒反應」，很難查。
+
+載入器只剩 2840 bytes 餘裕，加功能前先看這個數字。
 
 ---
 
@@ -69,10 +98,18 @@ build 過程會印出兩者的大小：
 pico_set_linker_script(infoNES ${CMAKE_CURRENT_LIST_DIR}/../../rp2040-retro-loader/app/memmap_app.ld)
 ```
 
-`app/memmap_app.ld` 相對於 pico-sdk 的預設只有兩處不同：
+`app/memmap_app.ld` 不是手寫的，是用 `tools/gen_app_ld.py` 從 SDK 自己那份 `memmap_default.ld` 生成的，只動兩處：
 
 1. `FLASH ORIGIN` 從 `0x10000000` 改成 `0x10004000`，長度扣掉 16KB
-2. 丟掉 `.boot2`
+2. 丟掉 `.boot2` 與它的 `ASSERT`
+
+換 SDK 版本時重跑：
+
+```bash
+python tools/gen_app_ld.py ~/.pico-sdk/sdk/2.2.0
+```
+
+**不要手改這個檔案。** `memmap_default.ld` 在 SDK 版本之間差異不小（2.x 多了 `.tdata`/`.tbss`、`.embedded_block`，`NOLOAD` 取代了 `COPY`，`__etext` 的定義方式也換了）。手抄的版本很快會跟 SDK 脫節，而症狀是「編得過但開機掛掉」這種最難查的那種。生成腳本會在版面對不上時直接報錯，不會安靜地生出壞檔案。
 
 ### 3.2 為什麼要丟掉 boot2
 
@@ -153,16 +190,46 @@ python tools/merge_uf2.py build/trampoline.uf2 infones.uf2 -o infones_standalone
 
 ---
 
-## 8. 已知限制與尚未驗證的部分
+## 8. 開發過程
 
-**尚未實機驗證。** 這份程式碼是在沒有 pico-sdk、沒有硬體的環境寫的，沒有編譯過也沒有燒錄過。以下都還沒被證實：
+設計是從一個問題往回推出來的：**同一份 UF2，要能單獨燒錄，也要能被載入器載入，而載入器不能把自己蓋掉。**
 
-- 載入器與跳板的實際大小是否真的在 16KB 內（`check_size.cmake` 會在 build 時告訴你）
-- SD 卡初始化與 FAT 解析（`fatlite.c` 是新寫的，沒有跑過任何一張真卡）
-- 交棒序列在實機上是否乾淨
-- `app/memmap_app.ld` 是照 pico-sdk 1.5 的 `memmap_default.ld` 改的，若你的 SDK 版本不同需要重新比對
+推導順序大致是：
 
-**設計上的限制：**
+1. 載入器要活在 flash 最前面（ROM 只認那裡），所以專題本體必須讓開 → 偏移
+2. 但偏移後的 image 單獨燒錄就開不了機（前面是空的）→ 需要跳板填那塊地
+3. 跳板跟載入器住同一塊地，兩者擇一 → 載入器讀 UF2 時必須丟掉跳板的 block
+4. 而「偏移」不能靠搬 bytes：RP2040 是 XIP，資料位址在編譯時就寫死在機器碼裡 → 專題必須重新編譯
+5. 重編之後專題自己那份 boot2 就沒用了（也不可能被執行）→ 從 linker script 丟掉
+
+### 過程中踩到的坑
+
+**`memmap_default.ld` 不能憑印象手寫。** 第一版是照 SDK 1.5 的記憶寫的，拿 2.2.0 的原檔一比，差了 `.tdata`/`.tbss`、`.embedded_block`、`NOLOAD` vs `COPY`、`__etext` 的定義方式。這種錯誤編得過但開機會掛，所以改成用 `tools/gen_app_ld.py` 從 SDK 原檔生成，版面對不上就直接報錯。
+
+**include guard 撞名。** `board.h` 用 `LCD_H` 表示螢幕高度，而 `lcd.h` 的 guard 也叫 `LCD_H` → `#ifndef LCD_H` 永遠為假，整個標頭被靜靜跳過，錯誤訊息卻是一整排「`LCD_COLS` undeclared」。guard 現在叫 `LOADER_LCD_H`。
+
+**16KB 比想像中緊。** 除了預期中的 FatFs（8–10KB），還有兩個沒預料到的：`snprintf` 即使 newlib nano 版也要 1.5–2KB，infones 的 `font_8x8.h` 是 2-bit packed 抗鋸齒格式、解碼邏輯比字型本身還大。兩個都換成自己寫的之後才進到 82%。
+
+---
+
+## 9. 驗證狀態
+
+### 已驗證（在本機實際跑過）
+
+- **編譯通過**：SDK 2.2.0 + GCC 14.2.1，loader 13544 bytes、trampoline 5536 bytes，都在 16KB 內
+- **`memmap_app.ld` 正確**：用一個最小測試專案編出來，`objdump` 確認 `.text` 落在 `0x10004000`、**沒有 `.boot2` 段**、向量表在最前面（SP `0x20042000`、Reset `0x100040f7`，Thumb bit 已設）——正好符合 `app_present()` 的檢查條件
+- **合併與丟棄規則**：`merge_uf2.py` 把真實的 trampoline.uf2 + 偏移版 app.uf2 合成 47 塊，流水號重編正確；模擬載入器的規則後，22 塊跳板被丟棄、25 塊從 `0x10004000` 開始寫入
+- **工具會擋錯**：用預設 linker script 編的 app 會被 `merge_uf2.py` 拒絕
+
+### 尚未驗證（沒有硬體）
+
+- **沒有燒錄過，沒有在實機上跑過任何一行**
+- SD 卡初始化與 FAT 解析——`sdspi.c` 與 `fatlite.c` 都是新寫的，沒碰過任何一張真卡
+- ILI9341 文字模式的實際顯示（初始化序列是照 infones 的抄的，但沒點亮過）
+- 交棒序列在實機上是否乾淨（VTOR/MSP/XIP flush 的效果只在紙上推導過）
+- 按鍵的長按重複手感
+
+### 設計上的限制
 
 - SD 卡只認根目錄、只認第一個分割區、磁區必須是 512 bytes
 - 非 ASCII 檔名會顯示成 `?`（字型只有 ASCII）
