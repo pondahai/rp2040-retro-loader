@@ -65,11 +65,22 @@ void __attribute__((noreturn)) launch_app(void)
     scb_hw->vtor = (uint32_t)vt;
 
     /*
-     * 換堆疊跟跳轉必須綁在一起,中間不能讓編譯器插入任何會碰 stack 的東西,
-     * 所以寫成一段 asm。跳過去之後就不再回來了。
+     * 換堆疊、開中斷、跳轉必須綁在一起,中間不能讓編譯器插入任何會碰 stack
+     * 的東西,所以寫成一段 asm。跳過去之後就不再回來了。
+     *
+     * ★ cpsie i 不能省。上面的 cpsid i 把 PRIMASK 設成 1,而 pico-sdk 的
+     *   crt0.S 從頭到尾沒有碰過 PRIMASK —— 正常開機時它本來就是 0,所以
+     *   SDK 沒有理由去清它。如果我們帶著 PRIMASK=1 跳過去,專題就會在
+     *   「所有中斷被遮蔽」的狀態下執行: sleep_ms() 靠 alarm + WFE,
+     *   永遠不會返回,而 infones 的 display_init() 開頭就是 sleep_ms(100)。
+     *   症狀是連背光都還沒亮就整台卡死,看起來就像根本沒開機。
+     *
+     *   這時候開中斷是安全的: NVIC 全部關掉且 pending 已清、SysTick 已停,
+     *   VTOR 也已經指向專題的向量表,沒有任何來源會在這一刻插進來。
      */
     __asm volatile (
         "msr msp, %0\n"
+        "cpsie i\n"
         "bx  %1\n"
         :
         : "r" (sp), "r" (pc)
