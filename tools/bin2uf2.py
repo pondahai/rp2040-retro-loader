@@ -84,11 +84,18 @@ def main():
 
     for i in range(total):
         chunk = data[i * PAYLOAD:(i + 1) * PAYLOAD]
+        # 最後一塊若不滿 256 要補到滿。RP2040 的 bootrom 以 256-byte page
+        # 為單位處理 UF2,payload_size 不是 256 的 block 它直接不收 —— 結果
+        # 是資料尾巴沒寫進去,而且因為湊不滿 numBlocks,燒完不會自動重開機
+        # (看起來就像「拖進去沒反應」)。picotool/elf2uf2 也都是補滿的。
+        # 補 0xFF 而不是 0x00:那是 flash 抹除後的值,不會多耗一次寫入。
+        if len(chunk) < PAYLOAD:
+            chunk = chunk + b"\xff" * (PAYLOAD - len(chunk))
         b = bytearray(BLOCK_SIZE)
         struct.pack_into("<IIIIIIII", b, 0,
                          MAGIC0, MAGIC1, FLAG_FAMILY,
                          addr + i * PAYLOAD,
-                         len(chunk),          # 最後一塊可能不滿 256
+                         PAYLOAD,
                          i, total,
                          RP2040_FAMILY)
         b[32:32 + len(chunk)] = chunk
