@@ -246,6 +246,50 @@ picotool save -r 0x10004000 0x10004020 readback.bin
 
 ---
 
+### 3.6 附帶大量資料的專題（以 DOOM 為例）
+
+有些專題不是「一個 uf2 燒完就結束」。rp2040-doom 就是：韌體約 257KB，
+地圖資料 `doom1.whx` 有 1.7MB，兩者分開燒，WAD 的位址寫死在韌體的
+`TINY_WAD_ADDR` 裡（在它的 `software/src/CMakeLists.txt`）。原本的裝法是
+韌體拖進 BOOTSEL，WAD 另外用 `picotool load -t bin -o 0x10042000` 燒。
+
+**這種專題一樣可以用載入器，不必特例。** 因為 `flasher.c` 是位址驅動的：
+`target_addr >= APP_BASE` 且不超出 flash 尾端就照寫，它並不在意那是程式
+還是資料。所以把 WAD 也包成 UF2，跟韌體合併成同一份檔案就行：
+
+```bash
+# 1. 韌體用 memmap_app.ld 重編，並把 TINY_WAD_ADDR 一起後移 16KB
+#    0x10042000 -> 0x10046000
+# 2. 資料包成 UF2
+python tools/bin2uf2.py doom1.whx -a 0x10046000 -o doom_wad.uf2
+# 3. 三段合併：跳板 + 韌體 + 資料
+python tools/merge_uf2.py build/trampoline.uf2 doom.uf2 doom_wad.uf2 -o DOOM.uf2
+```
+
+`merge_uf2.py` 第二個以後的參數可以有很多個，依位址由低到高排好，
+中間的空隙一樣用 `0xFF` 補到連續。
+
+**為什麼要綁在同一份檔案裡，而不是 WAD 事先燒一次**：WAD 佔的是 flash
+高位址，任何映像夠大的其他專題都會把它蓋掉，下次要玩 DOOM 就得再燒 1.7MB。
+綁在一起的話每次選 DOOM 都會把韌體與 WAD 一起重寫，誰蓋掉它都無所謂。
+
+**代價**：SD 卡上的 `DOOM.uf2` 約 4.2MB（8153 blocks），每次從選單選它要
+寫入約 2MB 的 flash，估計要等 30–45 秒。載入器的設計是「不記住上次選什麼，
+每次都重燒」，其他專題只有幾百 KB 感覺不出來，DOOM 是唯一會讓人盯著
+進度條等的。
+
+**空間非常緊**。以 2MB flash 計算：
+
+| | 韌體 | WAD | 結尾 | 剩餘 |
+|---|---|---|---|---|
+| 原始（無載入器） | `0x10000000` | `0x10042000` | `0x101F9898` | 26472 B |
+| 後移 16KB | `0x10004000` | `0x10046000` | `0x101FD898` | 10088 B |
+
+塞得下，但韌體再長一點就會撞到 flash 尾端。`bin2uf2.py` 會擋掉超出範圍、
+未對齊、以及寫進載入器地盤的情況；`merge_uf2.py` 會擋掉各段重疊。
+
+---
+
 ## 4. 使用
 
 1. `loader.uf2` 用 USB BOOTSEL 燒進 Pico（只需要一次）
