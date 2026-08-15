@@ -4,6 +4,8 @@ RP2040 掌機的開機載入器。冷開機進選單，列出 SD 卡上的 `.uf2
 
 搭配 [rp2040-retro-handheld](https://github.com/pondahai/rp2040-retro-handheld) 的各個專題使用：infones、doom、apple2、makecode arcade。
 
+> 接手開發請先讀 **[HANDOVER.md](HANDOVER.md)** —— 現況、待辦、踩過的坑與地雷都在那裡。
+
 ---
 
 ## 1. Flash 佈局
