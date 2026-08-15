@@ -137,7 +137,7 @@ static void draw_header(void)
 static void draw_footer(const char *msg, uint16_t fg)
 {
     lcd_puts_line(LCD_ROWS - 2, msg, fg, C_BLACK);
-    lcd_puts_line(LCD_ROWS - 1, " UP/DOWN select   A/START run   B rescan",
+    lcd_puts_line(LCD_ROWS - 1, " UP/DN pick  A/START run  B rescan  SEL=BOOTSEL",
                   C_GREY, C_BLACK);
 }
 
@@ -190,14 +190,26 @@ static void on_progress(uint32_t done, uint32_t total)
 
 /* ---------------------------------------------------------------- 流程 */
 
+/*
+ * 刻意不清畫面 —— 上面那行階段訊息(STATUS_ROW)要留著,它說明了走到哪一步
+ * 才失敗。載入器沒有 serial 可以看(stdio USB 為了省空間關掉了),螢幕是
+ * 唯一的回饋管道。
+ */
 static void fatal(const char *msg)
 {
-    lcd_clear(C_BLACK);
-    lcd_puts_line(2, " LOADER STOPPED", C_BLACK, C_RED);
-    lcd_puts_line(4, msg, C_WHITE, C_BLACK);
-    lcd_puts_line(6, " Fix it and power-cycle, or hold BOOTSEL", C_GREY, C_BLACK);
-    lcd_puts_line(7, " to reflash over USB.", C_GREY, C_BLACK);
+    lcd_puts_line(LCD_ROWS - 6, " LOADER STOPPED", C_BLACK, C_RED);
+    lcd_puts_line(LCD_ROWS - 4, msg, C_WHITE, C_BLACK);
+    lcd_puts_line(LCD_ROWS - 2, " Power-cycle after fixing, or hold BOOTSEL",
+                  C_GREY, C_BLACK);
+    lcd_puts_line(LCD_ROWS - 1, " to reflash over USB.", C_GREY, C_BLACK);
     while (1) tight_loop_contents();
+}
+
+#define STATUS_ROW 4
+
+static void status(const char *msg, uint16_t fg, uint16_t bg)
+{
+    lcd_puts_line(STATUS_ROW, msg, fg, bg);
 }
 
 static bool scan_card(void)
@@ -206,10 +218,30 @@ static bool scan_card(void)
     cursor = 0;
     scroll = 0;
 
-    if (!sd_init())  return false;
-    if (!fl_mount()) return false;
+    /*
+     * 每一步都先把自己印出來再做。卡住的時候,螢幕上停在哪一行就是
+     * 卡在哪一步 —— 這比事後猜有用得多。
+     */
+    status(" Init SD card...", C_GREY, C_BLACK);
+    if (!sd_init()) {
+        status(" SD init FAILED", C_WHITE, C_RED);
+        return false;
+    }
 
+    status(" Mounting FAT...", C_GREY, C_BLACK);
+    if (!fl_mount()) {
+        status(" FAT mount FAILED", C_WHITE, C_RED);
+        return false;
+    }
+
+    status(" Scanning root for *.uf2...", C_GREY, C_BLACK);
     entry_count = fl_list_uf2(entries, MAX_ENTRIES);
+
+    if (entry_count == 0) {
+        status(" Mounted OK, but no .uf2 found", C_WHITE, C_RED);
+    } else {
+        status("", C_GREY, C_BLACK);
+    }
     return true;
 }
 
@@ -254,6 +286,20 @@ static void run_selected(void)
 int main(void)
 {
     buttons_init();
+
+    /*
+     * 逃生口: 開機時按住 SELECT 就直接進 BOOTSEL。
+     *
+     * 載入器沒有 USB(stdio 為了省空間關掉了),所以 picotool 沒有 reset
+     * interface 可以用 —— 一旦燒進去,唯一能重燒的方法就是實體 BOOTSEL
+     * 按鈕。有些機殼按不到那顆按鈕,那就等於磚了。
+     *
+     * 放在最前面是刻意的: LCD、SD 都還沒初始化,就算它們壞掉也救得回來。
+     */
+    if (!gpio_get(BTN_PIN_SELECT)) {
+        reset_usb_boot(0, 0);
+    }
+
     lcd_init();
     lcd_clear(C_BLACK);
     draw_header();

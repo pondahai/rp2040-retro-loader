@@ -99,9 +99,13 @@ bool sd_init(void)
         else goto fail;
     }
 
-    /* 等卡片完成初始化。HCS 位元只對 v2 有意義。 */
+    /*
+     * 等卡片完成初始化。HCS 位元只對 v2 有意義。
+     * SD 規格給的上限是 1 秒,這裡留兩倍。原本寫 20000(=20 秒)的問題是
+     * 卡片沒反應時螢幕會沉默 20 秒,看起來像當機而不是失敗。
+     */
     ok = false;
-    for (int i = 0; i < 20000; i++) {
+    for (int i = 0; i < 2000; i++) {
         if (send_acmd(ACMD41, v2 ? (1u << 30) : 0) == 0) { ok = true; break; }
         sleep_ms(1);
     }
