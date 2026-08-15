@@ -2,7 +2,7 @@
 
 給接手這個專案的新對話串。**先讀這份，再依指引去讀 README 的對應章節與程式碼。**
 
-最後更新：2026-08-15（對應 `main` 分支 `f0072ae`）
+最後更新：2026-08-15
 
 ---
 
@@ -19,7 +19,7 @@ RP2040 掌機的開機載入器：冷開機進選單、從 SD 卡選一個 `.uf2
 | 倉庫 | 分支 | 狀態 |
 |---|---|---|
 | [pondahai/rp2040-retro-loader](https://github.com/pondahai/rp2040-retro-loader) | `main` | 本專案 |
-| [pondahai/rp2040-ili9341-infones](https://github.com/pondahai/rp2040-ili9341-infones) | `feature/loader-offset-build` | [PR #12](https://github.com/pondahai/rp2040-ili9341-infones/pull/12)，**尚未合併** |
+| [pondahai/rp2040-ili9341-infones](https://github.com/pondahai/rp2040-ili9341-infones) | `main` | [PR #12](https://github.com/pondahai/rp2040-ili9341-infones/pull/12) 已合併（merge commit `0072bcd`） |
 
 兩邊要一起看才完整。infones 那邊的改動是「偏移編譯模式」，預設關閉，不影響原本的 build。
 
@@ -66,7 +66,7 @@ RP2040 掌機的開機載入器：冷開機進選單、從 SD 卡選一個 `.uf2
 | `loader/board.h` | 腳位，**必須跟 infones 一致** |
 | `trampoline/trampoline.c` | 32 行，只做交棒 |
 | `app/memmap_app.ld` | **生成的，不要手改**，見 `tools/gen_app_ld.py` |
-| `tools/merge_uf2.py` | 跳板 + 本體 → 單一 UF2 |
+| `tools/merge_uf2.py` | 跳板 + 本體 → 單一 UF2，並用 `0xFF` 補滿中間的空隙（`pad_gap()`，見 README §3.5 坑 3） |
 | `tools/check_size.cmake` | 超過 16KB 讓 build 失敗 |
 
 ---
@@ -96,8 +96,12 @@ infones 的完整編譯指令記在它自己的 `software/infones/README.md`。
 
 ## 7. 燒錄與除錯的坑（全部實際踩過）
 
-**① 不要用拖曳燒錄。** 1MB 的 UF2 拖進 `RPI-RP2` 會安靜地截斷 —— 只有前 22 塊
-跳板寫進去，本體完全沒寫，而且沒有任何錯誤訊息。用：
+**① 位址不連續的 UF2 拖曳會安靜截斷。** 合併版拖進 `RPI-RP2` 只有前 22 塊
+跳板寫進去，本體完全沒寫，且無錯誤訊息。**不是大小問題**——同尺寸的連續 UF2
+拖曳正常。`merge_uf2.py` 現在預設用 `0xFF` 補滿跳板與 `APP_BASE` 之間的空隙，
+補完之後拖曳可行（已實機確認）。機制未查明，見 README §3.5 坑 3。
+
+開發時仍建議用有驗證的燒法：
 
 ```bash
 picotool load -v -x <檔案>
@@ -146,9 +150,14 @@ infones 就是踩在這裡（`NES_FILE_ADDR`），症狀是黑畫面且極難查
 > **DOOM 特別注意**：它的空間比 infones 更緊。動手前先確認 image 尾端離
 > 它自己的資料區還剩多少 —— 位移 16KB 之後可能直接撞上。
 
-### 8.3 合併 infones 的 PR #12
+### 8.3 ~~合併 infones 的 PR #12~~ ✅ 已完成
 
-實機已驗證通過，但還沒合併。合併前值得再確認預設模式沒有退化。
+2026-08-15 合併（`0072bcd`），四個 commit 保留。合併後從乾淨狀態重編預設模式，
+確認輸出與改動前逐項一致。
+
+infones 那邊另有一件未完成的事：把存檔從 flash 搬到 SD 卡，
+見該倉庫的 `nvram_sd_plan.md` 與其 `HANDOVER.md` §4.5。
+動機是一個目前就存在的缺陷——實際上只有一個存檔槽，換遊戲會覆蓋上一款的進度。
 
 ### 8.4 尚未查明的一件事
 
@@ -236,5 +245,7 @@ infones 那份是這塊硬體上已經證明可用的。
 | `d644ccb` | SD 指令間補 `wait_ready` |
 | `d318c1e` | 軟重置穿透 + B 保險 |
 | `f0072ae` | README 標記整條鏈已實機驗證 |
+| `4004727` | 加入 HANDOVER.md |
+| （本次） | `merge_uf2.py` 補空隙，讓合併版能被拖曳燒錄 |
 
 `git log` 看得到完整脈絡。每個修正都對應一次實機症狀，訊息裡有記症狀與推理。
