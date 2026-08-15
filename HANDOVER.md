@@ -139,7 +139,22 @@ picotool save -r 0x10004000 0x10004020 readback.bin
 
 前兩項使用者順手就能測，測完更新 README §9。
 
-### 8.2 改造第二個專題（doom 或 apple2）
+### 8.2 ~~改造第二個專題（doom 或 apple2）~~ ✅ apple2 已完成
+
+2026-08-15 完成 [pondahai/PicoApple2](https://github.com/pondahai/PicoApple2) 的改造，
+跳板路線與載入器路線都實機跑通。詳見 README §9 的「第二個專題」一段。
+
+**最大的收穫是清單本身不夠用**：它假設專題是 pico-sdk CMake 專案，而 PicoApple2 是
+arduino-cli + arduino-pico，換 linker script 的機制完全不同；更要命的是 arduino-pico
+的向量表不在 image 最前面（前面壓著 `.ota` + `.partition`，共 `0x3000`），
+只改 `ORIGIN` 會讓載入器跳到一堆資料上。這一類坑清單原本沒提。
+
+反倒是清單裡「最容易漏掉」的第 ③ 項在這裡完全不適用——PicoApple2 的磁碟映像走 SD 卡，
+flash 上只有 image 本身。
+
+**改 doom 之前先讀 README §9 那一段。**
+
+### 8.2b 改造 doom / arcade
 
 **照 README §3.4 的清單走。** 那份清單就是為此寫的，第二個專題也會反過來檢驗
 清單夠不夠用。

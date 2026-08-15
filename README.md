@@ -407,13 +407,47 @@ infones 燒 ROM 並 watchdog 重置 → 載入器認出是軟重置,無聲穿透
 - 從 SD 讀 UF2、丟棄 `target_addr < APP_BASE` 的 block、寫進 flash
 - 交棒，以及軟重置穿透
 
+### 已驗證（第二個專題：PicoApple2，實機，2026-08-15）
+
+[pondahai/PicoApple2](https://github.com/pondahai/PicoApple2) 已改造完成，跳板路線與載入器路線**都實機跑通**（開機進 Apple II 畫面、字形正常）。
+改造內容見該倉庫 README 的「搭配開機載入器」一章與 `loader_offset/`。
+
+這次改造反過來檢驗了 §3.4 的清單，結論分三塊：
+
+**清單第 ③ 項（寫死的 flash 位址）不適用。** PicoApple2 的磁碟映像與存檔全走 SD 卡，
+flash 上只有 image 本身，餘裕 1.89 MB。也就是 infones 最痛的那一項在這裡是空的。
+
+**但清單漏了一整類情況:專題不是 pico-sdk CMake 專案。**
+PicoApple2 走 arduino-cli + arduino-pico，第 ① 項的 `pico_set_linker_script` 完全用不上。
+arduino-pico 的 linker script 是 build 期由 `simplesub.py` 從
+`lib/<chip>/memmap_default.ld` 生成到 `{build.path}/memmap_default.ld`,而 link 指令
+寫死讀那個檔名。正確做法是覆蓋 platform.txt 的 prelink hook 的 `--input`,
+不是加 `-Wl,--script`（會跟寫死的那個打架）。
+
+**⚠️ 而且 arduino-pico 的向量表不在 image 最前面。** 這是新的一類坑,清單原本沒有:
+
+| 位址 | 段 |
+|---|---|
+| `0x10000000` | `.boot2` (256) |
+| `0x10000100` | `.ota` (`0x27f4`) ← ROM/boot2 其實是跳這裡 |
+| `0x100028f4` | `.partition` (`0x70c`) |
+| `0x10003000` | `.text`(向量表從這裡才開始) |
+
+只改 `ORIGIN` 而留著 `.ota` / `.partition`,向量表會落在 `0x10007000`,
+載入器跳到 `0x10004000` 只會拿到 OTA blob 的頭幾個 byte 當 SP —— 開機直接死,
+**症狀跟「根本沒燒進去」一模一樣**。三段都得丟,而且要明確 `/DISCARD/`
+(`ota.o` / `boot2.o` 是 link 指令寫死拉進來的,輸入段不丟會變 orphan 塞到向量表前面)。
+
+**給第三個專題的一句話**:清單第 ① 項應該先問「這個專題用什麼 build 系統」,
+第 ② 項應該擴大成「確認 APP_BASE 第一個 byte 就是向量表」而不只是「丟掉 boot2」。
+
 ### 尚未驗證
 
 - 按實體 RESET 是否確實回到載入器選單（理論上 RUN 腳是 power-on reset，`reason` 為 0）
 - 開機按住 B 強制顯示選單的保險
 - 燒錄中途失敗、UF2 損毀、SD 卡中途拔出等錯誤路徑
 - 多個 `.uf2` 時的捲動與長按重複
-- 只有 infones 測過。doom / apple2 / arcade 都還沒改造
+- doom / arcade 還沒改造（apple2 已完成並實機驗證，見下）
 
 ### 一個還沒解釋清楚的現象
 
