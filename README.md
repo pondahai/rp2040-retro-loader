@@ -129,6 +129,94 @@ python tools/merge_uf2.py build/trampoline.uf2 infones.uf2 -o infones_standalone
 
 ---
 
+### 3.4 改造其他專題時的檢查清單
+
+infones 是第一個改造的專題，以下是實際踩出來的順序。改 doom / apple2 / arcade 時照著走。
+
+**① 換 linker script** — 用 `tools/gen_app_ld.py` 生成，不要手寫（§3.1）。
+
+**② 確認丟掉 `.boot2` 是安全的**
+
+SDK 的 `crt0.S` 裡有一段會引用 `__boot2_entry_point`。在 SDK 2.2.0 它被 `#if !PICO_RP2040 && PICO_EMBED_XIP_SETUP && !PICO_NO_FLASH` 包住，RP2040 上不會編進去，所以 discard 安全。**換 SDK 版本時要重新確認**：
+
+```bash
+grep -n -B4 "__boot2_entry_point" $PICO_SDK_PATH/src/rp2_common/pico_crt0/crt0.S
+```
+
+**③ ⚠️ 找出專題寫死的 flash 位址——最容易漏掉、症狀最難查的一項**
+
+很多專題會在 flash 裡自己劃地盤：存 ROM、存檔、字型、資源。這些位址是絕對值，**不會**跟著 linker script 一起位移，於是本體往後推 16KB 之後，尾巴就可能壓上去。
+
+```bash
+grep -rn "XIP_BASE\|0x10[0-9a-fA-F]\{6\}\|flash_range_erase\|flash_range_program" --include=*.c --include=*.cpp --include=*.h .
+```
+
+找到之後把那些位址**一起往上推 16KB**，維持跟預設編譯相同的相對佈局。
+
+**④ 加一道 build 期的佈局檢查**
+
+這種重疊不會在編譯時報錯，只會在實機上變成黑畫面。infones 的做法是 `software/infones/check_flash_layout.cmake`：算出 image 結束位址，跟資料區起點比對，重疊就讓 build 失敗。每個專題都值得抄一份。
+
+**⑤ 燒錄用 `picotool load -v`，不要拖曳** — 見 §3.5 坑 3。
+
+---
+
+### 3.5 案例：infones 踩到的三個坑
+
+**坑 1：交棒時中斷沒有重新打開**
+
+`launch_app()` 用 `cpsid i` 關中斷，而 pico-sdk 的 `crt0.S` 從頭到尾沒有碰過 PRIMASK——正常開機時它本來就是 0，SDK 沒有理由去清它。帶著 PRIMASK=1 跳過去，專題就在「所有中斷被遮蔽」的狀態下啟動：`sleep_ms()` 靠 alarm + WFE，永遠不會返回。
+
+infones 的 `display_init()` 第一行就是 `sleep_ms(100)`，而背光是那個函式**最後**才點亮的，所以症狀是連背光都不亮，看起來像完全沒開機。
+
+已修（`common/launch.c` 的 `cpsie i`），這是所有專題共用的路徑，不必逐一處理。
+
+**坑 2：`NES_FILE_ADDR` 沒有跟著位移**
+
+infones 把選中的 ROM 燒在 `0x10080000`，NVRAM 存檔槽則從那裡往下長（`NES_FILE_ADDR - SRAM_SIZE * (slot+1)`）。
+
+| | image 結束 | 存檔槽 slot0 | 結果 |
+|---|---|---|---|
+| 預設 | `0x1007d078` | `0x1007e000` | 餘裕 3,976 bytes |
+| 偏移（未修） | `0x10080f78` | `0x1007e000` | **重疊 12,152 bytes** |
+| 偏移（ROM 區移到 `0x10084000`） | `0x10080f78` | `0x10082000` | 餘裕 4,232 bytes |
+
+未修時，infones 開機會把自己的 `.data` 初值讀成 ROM；選遊戲時 `menu.cpp` 還會 erase 掉那份初值。
+
+值得注意的是**預設編譯的餘裕本來就只有約 4KB**——這個相鄰關係一直沒有被檢查過，只是「剛好」沒撞到。位移 16KB 就撞了。
+
+**坑 3：拖曳燒錄會安靜地截斷**
+
+把 1MB 的合併版 UF2 拖進 `RPI-RP2` 磁碟，結果只有前面 22 塊跳板寫進去，本體完全沒寫（讀回 `0x10004000` 全是 `0xFF`），而且沒有任何錯誤訊息。
+
+診斷方式：
+
+```bash
+picotool info -a
+```
+
+```bash
+picotool save -r 0x10004000 0x10004020 readback.bin
+```
+
+改用有驗證的燒錄（`-v` 驗證，`-x` 順便執行）：
+
+```bash
+picotool load -v -x infones_standalone.uf2
+```
+
+裝置正在跑 app 時先踢回 BOOTSEL：
+
+```bash
+picotool reboot -f -u
+```
+
+> infones 的 `fds_plan.md` 7.6 記著「picotool 在 Windows 踢不動板子，要用 1200 baud touch」。用 picotool 2.2.0-a4 實測 `reboot -f -u` **可以**踢動；反而是韌體卡死時 CDC 不服務，1200 baud touch 會整個卡住開不了埠。
+
+這個坑的代價很大：它讓「跳板沒問題」看起來像「跳板壞了」。跳板的空白 flash 偵測（`app_present()` → `reset_usb_boot()`）反而是揭穿它的關鍵——裝置一直退回 BOOTSEL，才讓人想到去讀 `0x10004000`。
+
+---
+
 ## 4. 使用
 
 1. `loader.uf2` 用 USB BOOTSEL 燒進 Pico（只需要一次）
