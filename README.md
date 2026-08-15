@@ -259,12 +259,16 @@ picotool save -r 0x10004000 0x10004020 readback.bin
 
 ```bash
 # 1. 韌體用 memmap_app.ld 重編，並把 TINY_WAD_ADDR 一起後移 16KB
-#    0x10042000 -> 0x10046000
+#    0x10042000 -> 0x10046000，編出來的韌體複製成 doom_fw.uf2
 # 2. 資料包成 UF2
 python tools/bin2uf2.py doom1.whx -a 0x10046000 -o doom_wad.uf2
 # 3. 三段合併：跳板 + 韌體 + 資料
-python tools/merge_uf2.py build/trampoline.uf2 doom.uf2 doom_wad.uf2 -o DOOM.uf2
+python tools/merge_uf2.py build/trampoline.uf2 doom_fw.uf2 doom_wad.uf2 -o DOOM.uf2
 ```
+
+⚠️ **中間檔不要取名 `doom.uf2`**。Windows 的檔名不分大小寫，它跟輸出的
+`DOOM.uf2` 是同一個檔案，輸入會被輸出蓋掉。`merge_uf2.py` 是先把輸入讀完
+才寫檔，所以這次僥倖沒出事，但那是運氣不是保證。
 
 `merge_uf2.py` 第二個以後的參數可以有很多個，依位址由低到高排好，
 中間的空隙一樣用 `0xFF` 補到連續。
