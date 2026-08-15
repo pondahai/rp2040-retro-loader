@@ -1,0 +1,16 @@
+# build 產物
+build/
+build_*/
+cmake-build-*/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.map
+*.dis
+
+# 編輯器 / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

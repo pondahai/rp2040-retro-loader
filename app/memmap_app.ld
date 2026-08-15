@@ -1,0 +1,236 @@
+/*
+ * memmap_app.ld - 給「被載入器載入的專題」用的 linker script
+ *
+ * 改自 pico-sdk 的 memmap_default.ld,兩處不同:
+ *
+ *   1. FLASH ORIGIN 從 0x10000000 改成 0x10004000。前面 16KB 留給
+ *      載入器(從 SD 載入時)或跳板(USB 直接燒錄時)。
+ *
+ *   2. 拿掉 .boot2。專題自己那份 boot2 永遠不會被執行 —— ROM 只認
+ *      flash 最前面那 256 bytes,而那是載入器/跳板的地盤。留著不但白佔
+ *      256 bytes,它結尾還寫死「跳到 0x10000100」,萬一真的被執行會跳錯地方。
+ *      所以直接丟進 /DISCARD/。
+ *
+ * 結果是 0x10004000 這個位址上第一個 byte 就是向量表,載入器與跳板
+ * 都跳這裡,沒有 +0x100 之類的特例要記。
+ *
+ * 用法(專題的 CMakeLists.txt):
+ *     pico_set_linker_script(你的target ${路徑}/memmap_app.ld)
+ *
+ * ⚠ 這裡的數字必須跟 common/boot_map.h 一致。linker script 沒辦法 #include
+ *   那個 header,所以只能靠人工同步 —— 改一邊記得改另一邊。
+ */
+
+MEMORY
+{
+    /* 0x10000000 + 16k, 長度 = 2048k - 16k */
+    FLASH(rx) : ORIGIN = 0x10004000, LENGTH = 2032k
+    RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 256k
+    SCRATCH_X(rwx) : ORIGIN = 0x20040000, LENGTH = 4k
+    SCRATCH_Y(rwx) : ORIGIN = 0x20041000, LENGTH = 4k
+}
+
+ENTRY(_entry_point)
+
+SECTIONS
+{
+    .flash_begin : {
+        __flash_binary_start = .;
+    } > FLASH
+
+    /* 沒有 .boot2 —— 見檔頭說明。.text 的第一個東西就是向量表。 */
+
+    .text : {
+        __logical_binary_start = .;
+        KEEP (*(.vectors))
+        KEEP (*(.binary_info_header))
+        __binary_info_header_end = .;
+        KEEP (*(.reset))
+        /* TODO revisit this now memset/memcpy/float in ROM */
+        /* bit of a hack right now to exclude all floating point and time critical (e.g. memset, memcpy) code from
+         * FLASH ... we will include any thing excluded here in .data below by default */
+        *(.init)
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .text*)
+        *(.fini)
+        /* Pull all c'tors into .text */
+        *crtbegin.o(.ctors)
+        *crtbegin?.o(.ctors)
+        *(EXCLUDE_FILE(*crtend?.o *crtend.o) .ctors)
+        *(SORT(.ctors.*))
+        *(.ctors)
+        /* Followed by destructors */
+        *crtbegin.o(.dtors)
+        *crtbegin?.o(.dtors)
+        *(EXCLUDE_FILE(*crtend?.o *crtend.o) .dtors)
+        *(SORT(.dtors.*))
+        *(.dtors)
+
+        *(.eh_frame*)
+        . = ALIGN(4);
+    } > FLASH
+
+    .rodata : {
+        *(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .rodata*)
+        . = ALIGN(4);
+        *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.flashdata*)))
+        . = ALIGN(4);
+    } > FLASH
+
+    .ARM.extab :
+    {
+        *(.ARM.extab* .gnu.linkonce.armextab.*)
+    } > FLASH
+
+    __exidx_start = .;
+    .ARM.exidx :
+    {
+        *(.ARM.exidx* .gnu.linkonce.armexidx.*)
+    } > FLASH
+    __exidx_end = .;
+
+    /* Machine inspectable binary information */
+    . = ALIGN(4);
+    __binary_info_start = .;
+    .binary_info :
+    {
+        KEEP(*(.binary_info.keep.*))
+        *(.binary_info.*)
+    } > FLASH
+    __binary_info_end = .;
+    . = ALIGN(4);
+
+    .ram_vector_table (COPY): {
+        *(.ram_vector_table)
+    } > RAM
+
+    .data : {
+        __data_start__ = .;
+        *(vtable)
+
+        *(.time_critical*)
+
+        /* remaining .text and .rodata; i.e. stuff we exclude above because we want it in RAM */
+        *(.text*)
+        . = ALIGN(4);
+        *(.rodata*)
+        . = ALIGN(4);
+
+        *(.data*)
+
+        . = ALIGN(4);
+        *(.after_data.*)
+        . = ALIGN(4);
+        /* preinit data */
+        PROVIDE_HIDDEN (__mutex_array_start = .);
+        KEEP(*(SORT(.mutex_array.*)))
+        KEEP(*(.mutex_array))
+        PROVIDE_HIDDEN (__mutex_array_end = .);
+
+        . = ALIGN(4);
+        /* preinit data */
+        PROVIDE_HIDDEN (__preinit_array_start = .);
+        KEEP(*(SORT(.preinit_array.*)))
+        KEEP(*(.preinit_array))
+        PROVIDE_HIDDEN (__preinit_array_end = .);
+
+        . = ALIGN(4);
+        /* init data */
+        PROVIDE_HIDDEN (__init_array_start = .);
+        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(.init_array))
+        PROVIDE_HIDDEN (__init_array_end = .);
+
+        . = ALIGN(4);
+        /* finit data */
+        PROVIDE_HIDDEN (__fini_array_start = .);
+        *(SORT(.fini_array.*))
+        *(.fini_array)
+        PROVIDE_HIDDEN (__fini_array_end = .);
+
+        *(.jcr)
+        . = ALIGN(4);
+        /* All data end */
+        __data_end__ = .;
+    } > RAM AT> FLASH
+
+    .uninitialized_data (COPY): {
+        . = ALIGN(4);
+        *(.uninitialized_data*)
+    } > RAM
+
+    /* Start and end symbols must be word-aligned */
+    .scratch_x : {
+        __scratch_x_start__ = .;
+        *(.scratch_x.*)
+        . = ALIGN(4);
+        __scratch_x_end__ = .;
+    } > SCRATCH_X AT > FLASH
+    __scratch_x_source__ = LOADADDR(.scratch_x);
+
+    .scratch_y : {
+        __scratch_y_start__ = .;
+        *(.scratch_y.*)
+        . = ALIGN(4);
+        __scratch_y_end__ = .;
+    } > SCRATCH_Y AT > FLASH
+    __scratch_y_source__ = LOADADDR(.scratch_y);
+
+    .bss  : {
+        . = ALIGN(4);
+        __bss_start__ = .;
+        *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.bss*)))
+        *(COMMON)
+        . = ALIGN(4);
+        __bss_end__ = .;
+    } > RAM
+
+    .heap (COPY):
+    {
+        __end__ = .;
+        end = __end__;
+        KEEP(*(.heap*))
+        __HeapLimit = .;
+    } > RAM
+
+    /* .stack*_dummy section doesn't contains any symbols. It is only
+     * used for linker to calculate size of stack sections, and assign
+     * values to stack symbols later
+     *
+     * stack1 section may be empty/missing if platform_launch_core1 is not used */
+
+    /* by default we put core 0 stack at the end of scratch Y, so that if core 1
+     * stack is not used then all of SCRATCH_X is free.
+     */
+    .stack1_dummy (COPY):
+    {
+        *(.stack1*)
+    } > SCRATCH_X
+    .stack_dummy (COPY):
+    {
+        KEEP(*(.stack*))
+    } > SCRATCH_Y
+
+    .flash_end : {
+        PROVIDE(__flash_binary_end = .);
+    } > FLASH
+
+    /* stack limit is poorly named, but historically is maximum heap ptr */
+    __StackLimit = ORIGIN(RAM) + LENGTH(RAM);
+    __StackOneTop = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);
+    __StackTop = ORIGIN(SCRATCH_Y) + LENGTH(SCRATCH_Y);
+    __StackOneBottom = __StackOneTop - SIZEOF(.stack1_dummy);
+    __StackBottom = __StackTop - SIZEOF(.stack_dummy);
+    PROVIDE(__stack = __StackTop);
+
+    /* Check if data + heap + stack exceeds RAM limit */
+    ASSERT(__StackLimit >= __HeapLimit, "region RAM overflowed")
+
+    ASSERT( __binary_info_header_end - __logical_binary_start <= 256, "Binary info must be in first 256 bytes of the binary")
+
+    /*
+     * 專題自己的 boot2 沒有用,而且內容是錯的(結尾寫死跳 0x10000100)。
+     * pico-sdk 還是會編出這個 section,在這裡明確丟掉,免得它被 orphan
+     * placement 隨便塞到某個地方去。
+     */
+    /DISCARD/ : { *(.boot2) }
+}
