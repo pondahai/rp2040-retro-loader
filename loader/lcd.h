@@ -10,6 +10,7 @@
 #define LOADER_LCD_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define LCD_COLS 40
 #define LCD_ROWS 30
@@ -32,5 +33,17 @@ void lcd_puts(int col, int row, const char *s, uint16_t fg, uint16_t bg);
 
 /* 把整列先填滿 bg 再寫字,用來畫光棒與清掉上一次的殘字。 */
 void lcd_puts_line(int row, const char *s, uint16_t fg, uint16_t bg);
+
+/*
+ * 像素模式。座標是像素不是字元格,唯一的用途是縮圖 —— 仍然沒有 framebuffer,
+ * 資料是誰呼叫誰負責一段一段餵進來的(見 lcd.h 開頭的說明)。
+ *
+ * 用法: lcd_blit_begin() 開一塊矩形,然後連續 lcd_blit() 直到填滿。
+ * 像素格式是 RGB565 big-endian(高位元組先送),跟 ILI9341 的線上格式一致。
+ */
+void lcd_blit_begin(int x, int y, int w, int h);
+void lcd_blit(const uint8_t *data, size_t n);
+void lcd_fill_rect(int x, int y, int w, int h, uint16_t c);
+void lcd_frame(int x, int y, int w, int h, uint16_t c);
 
 #endif /* LOADER_LCD_H */

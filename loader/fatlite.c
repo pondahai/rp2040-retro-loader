@@ -132,7 +132,14 @@ static bool ends_with_uf2(const char *s)
            e[3] == '2';
 }
 
-int fl_list_uf2(fl_entry_t *out, int max)
+/*
+ * 走一遍根目錄。兩種用法共用這一份走訪邏輯,因為 FAT16/FAT32 的目錄結構差異
+ * (固定區 vs cluster 鏈)與 LFN 的拼裝都不是想重寫第二次的東西。
+ *
+ *   want == NULL: 收集所有 .uf2,依檔名排序,回傳筆數(最多 max)
+ *   want != NULL: 找檔名剛好等於 want 的那一個,找到回傳 1,沒有回傳 0
+ */
+static int walk_root(fl_entry_t *out, int max, const char *want)
 {
     int count = 0;
     char lfn[FL_NAME_MAX + 1];
@@ -188,11 +195,17 @@ int fl_list_uf2(fl_entry_t *out, int max)
             }
             lfn_valid = false;
 
-            if (!ends_with_uf2(e.name)) continue;
+            if (want) {
+                if (name_cmp(e.name, want) != 0) continue;
+            } else {
+                if (!ends_with_uf2(e.name)) continue;
+            }
 
             e.cluster = ((uint32_t)rd16(&d[20]) << 16) | rd16(&d[26]);
             e.size    = rd32(&d[28]);
             if (e.cluster < 2 || e.size == 0) continue;
+
+            if (want) { out[0] = e; return 1; }
 
             /* 邊讀邊插入排序，選單就不必再排一次 */
             int p = count;
@@ -217,6 +230,16 @@ int fl_list_uf2(fl_entry_t *out, int max)
     }
 
     return count;
+}
+
+int fl_list_uf2(fl_entry_t *out, int max)
+{
+    return walk_root(out, max, NULL);
+}
+
+bool fl_find(const char *name, fl_entry_t *out)
+{
+    return walk_root(out, 1, name) == 1;
 }
 
 void fl_open(const fl_entry_t *e, fl_file_t *f)

@@ -36,6 +36,12 @@ bool fl_mount(void);
  */
 int fl_list_uf2(fl_entry_t *out, int max);
 
+/*
+ * 找根目錄裡檔名剛好等於 name 的檔案(不分大小寫)。找到才會動 out。
+ * 給縮圖用: 選單有 FOO.UF2,就去找同名的 FOO.RAW。
+ */
+bool fl_find(const char *name, fl_entry_t *out);
+
 void fl_open(const fl_entry_t *e, fl_file_t *f);
 
 /*

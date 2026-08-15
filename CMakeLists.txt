@@ -26,6 +26,29 @@ function(configure_boot_image target)
     # 空間比速度重要
     target_compile_options(${target} PRIVATE -Os -ffunction-sections -fdata-sections)
     target_link_options(${target} PRIVATE -Wl,--gc-sections)
+    #
+    # 不要加 -flto。試過了,是淨損失:
+    #
+    # SDK 用了上百個 -Wl,--wrap=...(puts/putchar/printf/memcpy/除法...)。
+    # LTO plugin 在 ltrans 階段之前就判定 __wrap_puts 沒人參照而丟掉,等
+    # panic.c 被 inline 展開後才冒出對它的參照 -> undefined reference。
+    #
+    # 用 -Wl,--undefined=__wrap_puts 強留符號可以連結成功,但那等於把整套
+    # stdio + printf 拉回來 —— 而 pico_enable_stdio_*(0) 的用意正是不要它:
+    #     loader     11248 -> 22188 bytes (爆掉 5804)
+    #     trampoline  2820 -> 15372 bytes
+    # 也就是說 LTO 省下的遠不及它擋掉的 gc-sections。
+
+    # 關掉預設 alarm pool: sleep_ms() 會退化成 busy wait,而整個 alarm pool
+    # (irq handler + 排程 + .bss 的 entry 陣列)就會被 gc 掉,省下約 1.6KB。
+    # 載入器只在開機序列與燒錄回饋上用 sleep_ms,沒有任何背景工作需要在等待
+    # 期間繼續跑,busy wait 沒有損失。
+    #
+    # ★ 這同時也是交棒的前提之一(見 common/launch.c): 沒有 alarm pool 就沒有
+    #   timer IRQ 會在我們跳去 APP_BASE 的前一刻插進來。
+    target_compile_definitions(${target} PRIVATE
+        PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1
+    )
 
     # 載入器不需要 serial console,而 stdio 會拖進整套 printf
     pico_enable_stdio_uart(${target} 0)
@@ -51,6 +74,8 @@ add_executable(loader
     loader/sdspi.c
     loader/fatlite.c
     loader/flasher.c
+    loader/thumb.c
+    loader/coverflow.c
     common/launch.c
 )
 target_link_libraries(loader

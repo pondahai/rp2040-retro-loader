@@ -9,6 +9,15 @@ cmake-build-*/
 *.map
 *.dis
 
+# 封面圖: 來源圖與轉出來的 .RAW 都不進版控。
+# .RAW 是 make_thumb.py 的產物,來源圖是各專題自己的素材 —— 兩者都跟
+# 載入器的原始碼無關,而且動輒幾 MB。要用就自己轉一份放進 SD 卡。
+*.RAW
+*.raw
+*.jpg
+*.jpeg
+*.png
+
 # 編輯器 / OS
 .vscode/
 .idea/

@@ -1,8 +1,12 @@
 /*
  * main.c - 掌機開機選單
  *
- * 冷開機一律進這裡。列出 SD 卡根目錄的 .uf2,光棒選一個,寫進 flash 的
- * APP 區,然後交棒過去。不記住上次選了什麼 —— 每次都重燒。
+ * 冷開機一律進這裡。列出 SD 卡根目錄的 .uf2,用封面圖左右選一個,寫進 flash
+ * 的 APP 區,然後交棒過去。不記住上次選了什麼 —— 每次都重燒。
+ *
+ * 選單本身沒有文字,只有封面(見 coverflow.c)。但錯誤與燒錄進度是文字 ——
+ * 那些沒有圖可以代替,而載入器沒有 serial 可看,螢幕是唯一的回饋管道,
+ * 沉默的失敗最難查。
  *
  * 整支程式活在 flash 最前面的 16KB 裡(見 common/boot_map.h),而且這 16KB
  * 是跟跳板共用的同一塊地。超過就會蓋到專題本體,所以 CMake 有一道
@@ -12,6 +16,7 @@
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "hardware/structs/watchdog.h"
+#include "hardware/structs/timer.h"
 #include "boot_map.h"
 #include "launch.h"
 #include "board.h"
@@ -19,6 +24,8 @@
 #include "sdspi.h"
 #include "fatlite.h"
 #include "flasher.h"
+#include "thumb.h"
+#include "coverflow.h"
 
 /* ----------------------------------------------------------- 字串工具 */
 /*
@@ -44,14 +51,6 @@ static void sb_str(sb_t *b, const char *s)
     while (*s) sb_ch(b, *s++);
 }
 
-/* 截斷到 max 個字元,不足則補空白到 pad 寬度 */
-static void sb_str_field(sb_t *b, const char *s, int max, int pad)
-{
-    int n = 0;
-    while (*s && n < max) { sb_ch(b, *s++); n++; }
-    while (n < pad) { sb_ch(b, ' '); n++; }
-}
-
 /* 右靠的十進位整數,寬度不足補空白 */
 static void sb_uint(sb_t *b, unsigned v, int width)
 {
@@ -63,13 +62,10 @@ static void sb_uint(sb_t *b, unsigned v, int width)
 }
 
 #define MAX_ENTRIES 24
-#define LIST_TOP    4          /* 清單從第幾列開始畫 */
-#define LIST_ROWS   20
 
 static fl_entry_t entries[MAX_ENTRIES];
 static int entry_count;
 static int cursor;
-static int scroll;
 
 /* ---------------------------------------------------------------- 按鍵 */
 
@@ -99,29 +95,35 @@ static uint32_t buttons_read(void)
 }
 
 /*
+ * 時間一律用 timer_hw->timerawl 的 32-bit 微秒值,不走 to_ms_since_boot()。
+ * 後者拿 64-bit 微秒去除以 1000,會把 __aeabi_ldiv 整包(約 1KB)拖進 16KB
+ * 的預算裡 —— 那是這支程式裡最肥的單一項,而選單需要的只是「過了沒」。
+ *
+ * 32-bit 微秒約 71.6 分鐘就 wrap,所以比較必須寫成有號差值而不是 a >= b;
+ * 只要間隔遠小於 wrap 週期(這裡最長 400ms),減法在 wrap 前後都是對的。
+ */
+#define REPEAT_DELAY_US 400000u      /* 第一次重複前先等久一點 */
+#define REPEAT_RATE_US   90000u
+
+/*
  * 回傳這次「剛按下」的按鍵。長按會以固定間隔重複,不然在 20 幾個檔案裡
  * 一格一格按到目標很痛苦。
  */
 static uint32_t buttons_poll(void)
 {
     static uint32_t prev;
-    static uint32_t hold_since;
     static uint32_t next_repeat;
 
-    uint32_t now = to_ms_since_boot(get_absolute_time());
+    uint32_t now = timer_hw->timerawl;
     uint32_t cur = buttons_read();
     uint32_t edge = cur & ~prev;
 
     if (edge) {
-        hold_since = now;
-        next_repeat = now + 400;      /* 第一次重複前先等久一點 */
-    } else if (cur && cur == prev && now >= next_repeat) {
+        next_repeat = now + REPEAT_DELAY_US;
+    } else if (cur && cur == prev && (int32_t)(now - next_repeat) >= 0) {
         edge = cur;
-        next_repeat = now + 90;
-    } else if (!cur) {
-        hold_since = 0;
+        next_repeat = now + REPEAT_RATE_US;
     }
-    (void)hold_since;
 
     prev = cur;
     return edge;
@@ -129,46 +131,15 @@ static uint32_t buttons_poll(void)
 
 /* ---------------------------------------------------------------- 畫面 */
 
-static void draw_header(void)
+/*
+ * 文字畫面(掃卡、燒錄、錯誤)一律白底黑字,跟選單的白底一致。
+ * 這些是選單之外的狀態,不必省字 —— 它們是唯一能說明「為什麼不動了」的東西。
+ */
+#define STATUS_ROW 4
+
+static void status(const char *msg, uint16_t fg)
 {
-    lcd_puts_line(0, " RP2040 RETRO HANDHELD - LOADER", C_BLACK, C_GREEN);
-    lcd_puts_line(2, " SD:/*.uf2", C_GREY, C_BLACK);
-}
-
-static void draw_footer(const char *msg, uint16_t fg)
-{
-    lcd_puts_line(LCD_ROWS - 2, msg, fg, C_BLACK);
-    lcd_puts_line(LCD_ROWS - 1, " UP/DN pick  A/START run  B rescan  SEL=BOOTSEL",
-                  C_GREY, C_BLACK);
-}
-
-static void draw_list(void)
-{
-    /* 讓光棒永遠留在可見範圍內 */
-    if (cursor < scroll) scroll = cursor;
-    if (cursor >= scroll + LIST_ROWS) scroll = cursor - LIST_ROWS + 1;
-
-    for (int i = 0; i < LIST_ROWS; i++) {
-        int idx = scroll + i;
-        char line[LCD_COLS + 1];
-
-        if (idx < entry_count) {
-            /* 尺寸放右邊,長檔名被截掉時至少還看得出是哪一支 */
-            sb_t b; sb_init(&b, line, sizeof(line));
-            sb_ch(&b, ' ');
-            sb_str_field(&b, entries[idx].name, 28, 28);
-            sb_ch(&b, ' ');
-            sb_uint(&b, (unsigned)(entries[idx].size / 1024), 5);
-            sb_ch(&b, 'K');
-        } else {
-            line[0] = 0;
-        }
-
-        bool sel = (idx == cursor) && (idx < entry_count);
-        lcd_puts_line(LIST_TOP + i, line,
-                      sel ? C_BLACK : C_WHITE,
-                      sel ? C_YELLOW : C_BLACK);
-    }
+    lcd_puts_line(STATUS_ROW, msg, fg, C_WHITE);
 }
 
 static void on_progress(uint32_t done, uint32_t total)
@@ -186,10 +157,13 @@ static void on_progress(uint32_t done, uint32_t total)
     sb_ch(&b, '/');
     sb_uint(&b, (unsigned)total, 0);
     sb_ch(&b, ')');
-    lcd_puts_line(LCD_ROWS - 2, line, C_YELLOW, C_BLACK);
+    lcd_puts_line(LCD_ROWS - 2, line, C_BLACK, C_WHITE);
 }
 
 /* ---------------------------------------------------------------- 流程 */
+
+/* 兩處掛掉的原因一樣,共用同一份字串 —— 詳細差異看 STATUS_ROW 那行 */
+static const char msg_no_uf2[] = " No SD card, or no .uf2 in root.";
 
 /*
  * 刻意不清畫面 —— 上面那行階段訊息(STATUS_ROW)要留著,它說明了走到哪一步
@@ -198,55 +172,47 @@ static void on_progress(uint32_t done, uint32_t total)
  */
 static void fatal(const char *msg)
 {
-    lcd_puts_line(LCD_ROWS - 6, " LOADER STOPPED", C_BLACK, C_RED);
-    lcd_puts_line(LCD_ROWS - 4, msg, C_WHITE, C_BLACK);
-    lcd_puts_line(LCD_ROWS - 2, " Power-cycle after fixing, or hold BOOTSEL",
-                  C_GREY, C_BLACK);
-    lcd_puts_line(LCD_ROWS - 1, " to reflash over USB.", C_GREY, C_BLACK);
+    lcd_puts_line(LCD_ROWS - 6, " LOADER STOPPED", C_WHITE, C_RED);
+    lcd_puts_line(LCD_ROWS - 4, msg, C_BLACK, C_WHITE);
+    lcd_puts_line(LCD_ROWS - 2, " Fix and power-cycle, or BOOTSEL to reflash.",
+                  C_GREY, C_WHITE);
     while (1) tight_loop_contents();
-}
-
-#define STATUS_ROW 4
-
-static void status(const char *msg, uint16_t fg, uint16_t bg)
-{
-    lcd_puts_line(STATUS_ROW, msg, fg, bg);
 }
 
 static bool scan_card(void)
 {
     entry_count = 0;
     cursor = 0;
-    scroll = 0;
+    cf_reset();          /* 換一批檔案了,舊的封面快取全部作廢 */
 
     /*
      * 每一步都先把自己印出來再做。卡住的時候,螢幕上停在哪一行就是
      * 卡在哪一步 —— 這比事後猜有用得多。
      */
-    status(" Init SD card...", C_GREY, C_BLACK);
+    status(" Init SD card...", C_GREY);
     sd_result_t sr = sd_init();
     if (sr != SD_OK) {
         char line[LCD_COLS + 1];
         sb_t b; sb_init(&b, line, sizeof(line));
         sb_str(&b, " SD init FAILED: ");
         sb_str(&b, sd_result_str(sr));
-        status(line, C_WHITE, C_RED);
+        status(line, C_RED);
         return false;
     }
 
-    status(" Mounting FAT...", C_GREY, C_BLACK);
+    status(" Mounting FAT...", C_GREY);
     if (!fl_mount()) {
-        status(" FAT mount FAILED", C_WHITE, C_RED);
+        status(" FAT mount FAILED", C_RED);
         return false;
     }
 
-    status(" Scanning root for *.uf2...", C_GREY, C_BLACK);
+    status(" Scanning *.uf2...", C_GREY);
     entry_count = fl_list_uf2(entries, MAX_ENTRIES);
 
     if (entry_count == 0) {
-        status(" Mounted OK, but no .uf2 found", C_WHITE, C_RED);
+        status(" Mounted OK, no .uf2 found", C_RED);
     } else {
-        status("", C_GREY, C_BLACK);
+        status("", C_GREY);
     }
     return true;
 }
@@ -255,11 +221,10 @@ static void run_selected(void)
 {
     const fl_entry_t *e = &entries[cursor];
 
-    lcd_clear(C_BLACK);
-    draw_header();
-    lcd_puts_line(4, " Loading:", C_GREY, C_BLACK);
-    lcd_puts_line(5, e->name, C_WHITE, C_BLACK);
-    lcd_puts_line(7, " Do not power off.", C_RED, C_BLACK);
+    lcd_clear(C_WHITE);
+    lcd_puts_line(4, " Loading:", C_GREY, C_WHITE);
+    lcd_puts_line(5, e->name, C_BLACK, C_WHITE);
+    lcd_puts_line(7, " Do not power off.", C_RED, C_WHITE);
 
     uf2_result_t r = uf2_flash_file(e, on_progress);
 
@@ -273,20 +238,35 @@ static void run_selected(void)
          * 現在是半個 image。讓使用者知道要重選一個燒完整。
          */
         lcd_puts_line(LCD_ROWS - 2, line, C_WHITE, C_RED);
-        lcd_puts_line(LCD_ROWS - 1, " Flash is now incomplete. Pick another.",
-                      C_WHITE, C_BLACK);
+        lcd_puts_line(LCD_ROWS - 1, " Flash incomplete. Pick another.",
+                      C_BLACK, C_WHITE);
         sleep_ms(3000);
         return;
     }
 
     if (!app_present()) {
-        fatal(" Wrote OK but no valid vector table at APP_BASE.");
+        fatal(" Wrote OK, but bad vector table at APP_BASE.");
     }
 
-    lcd_puts_line(LCD_ROWS - 2, " Starting...", C_GREEN, C_BLACK);
+    lcd_puts_line(LCD_ROWS - 2, " Starting...", C_GREEN, C_WHITE);
     sleep_ms(200);
 
     launch_app();
+}
+
+/* 回到選單: 整個畫面重來一次,把上一輪的文字清乾淨 */
+static void show_menu(void)
+{
+    lcd_clear(C_WHITE);
+    cf_draw(entries, entry_count, cursor);
+}
+
+static void move_cursor(int delta)
+{
+    int to = cursor + delta;
+    if (to < 0 || to >= entry_count) return;
+    cf_slide(entries, entry_count, cursor, to);
+    cursor = to;
 }
 
 int main(void)
@@ -330,42 +310,35 @@ int main(void)
     }
 
     lcd_init();
-    lcd_clear(C_BLACK);
-    draw_header();
+    lcd_clear(C_WHITE);
 
-    if (!scan_card()) {
-        fatal(" No SD card, or not FAT16/FAT32.");
+    if (!scan_card() || entry_count == 0) {
+        fatal(msg_no_uf2);
     }
 
-    if (entry_count == 0) {
-        fatal(" No .uf2 files in the SD card root.");
-    }
-
-    draw_list();
-    draw_footer(" Ready.", C_GREEN);
+    show_menu();
 
     while (1) {
         uint32_t p = buttons_poll();
 
-        if (p & (1u << B_UP)) {
-            if (cursor > 0) { cursor--; draw_list(); }
-        } else if (p & (1u << B_DOWN)) {
-            if (cursor < entry_count - 1) { cursor++; draw_list(); }
+        /*
+         * 封面是橫向排列,所以左右才是主要的方向鍵;上下一併收下,
+         * 因為手指習慣不是設計能規定的。
+         */
+        if (p & ((1u << B_LEFT) | (1u << B_UP))) {
+            move_cursor(-1);
+        } else if (p & ((1u << B_RIGHT) | (1u << B_DOWN))) {
+            move_cursor(1);
         } else if (p & ((1u << B_A) | (1u << B_START))) {
             run_selected();
             /* 只有燒錄失敗才會回到這裡 */
-            lcd_clear(C_BLACK);
-            draw_header();
-            draw_list();
-            draw_footer(" Previous attempt failed.", C_RED);
+            show_menu();
         } else if (p & (1u << B_B)) {
-            lcd_clear(C_BLACK);
-            draw_header();
+            lcd_clear(C_WHITE);
             if (!scan_card() || entry_count == 0) {
-                fatal(" No SD card or no .uf2 found on rescan.");
+                fatal(msg_no_uf2);
             }
-            draw_list();
-            draw_footer(" Rescanned.", C_GREEN);
+            show_menu();
         }
 
         sleep_ms(16);

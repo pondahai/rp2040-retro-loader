@@ -101,6 +101,41 @@ void lcd_clear(uint16_t bg)
     }
 }
 
+void lcd_blit_begin(int x, int y, int w, int h)
+{
+    set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+}
+
+void lcd_blit(const uint8_t *data, size_t n)
+{
+    /*
+     * 開窗之後控制器會自己換行、自己收下連續的像素資料,所以餵進來的長度
+     * 不必對齊一列的寬度 —— 這正是縮圖能一次丟 512 bytes(SD 的磁區大小)
+     * 而不必先湊成整列的原因。
+     */
+    wr_data(data, n);
+}
+
+void lcd_fill_rect(int x, int y, int w, int h, uint16_t c)
+{
+    uint8_t line[LCD_W * 2];
+    if (w > LCD_W) w = LCD_W;
+    for (int i = 0; i < w; i++) {
+        line[i * 2]     = c >> 8;
+        line[i * 2 + 1] = c & 0xff;
+    }
+    lcd_blit_begin(x, y, w, h);
+    for (int i = 0; i < h; i++) wr_data(line, (size_t)w * 2);
+}
+
+void lcd_frame(int x, int y, int w, int h, uint16_t c)
+{
+    lcd_fill_rect(x,         y,         w, 1, c);
+    lcd_fill_rect(x,         y + h - 1, w, 1, c);
+    lcd_fill_rect(x,         y,         1, h, c);
+    lcd_fill_rect(x + w - 1, y,         1, h, c);
+}
+
 void lcd_putc(int col, int row, char ch, uint16_t fg, uint16_t bg)
 {
     if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return;
