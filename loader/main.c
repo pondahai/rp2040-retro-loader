@@ -11,6 +11,7 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
+#include "hardware/structs/watchdog.h"
 #include "boot_map.h"
 #include "launch.h"
 #include "board.h"
@@ -303,6 +304,29 @@ int main(void)
      */
     if (!gpio_get(BTN_PIN_SELECT)) {
         reset_usb_boot(0, 0);
+    }
+
+    /*
+     * 軟重置直接穿透給專題,不顯示選單、不重燒。
+     *
+     * 為什麼需要這個: 有些專題用「重置晶片」來切換自己的狀態。infones 就是
+     * 這樣 —— 它的選單選好遊戲後把 ROM 燒進 flash,然後 watchdog_enable()
+     * 重置,開機時再用 watchdog_caused_reboot() 判斷這次要直接進遊戲。
+     * (menu.cpp 的註解說重置是為了拿到乾淨的 core1/DMA 狀態,聲音才正常。)
+     *
+     * 載入器搬進 0x10000000 之後,那次重置就不再回到 infones,而是掉進
+     * 載入器的選單 —— 使用者得再選一次、再等重燒 1MB。是載入器改變了
+     * 「重置」的意義,所以由載入器負責把它修回來,而不是要求每個專題改寫。
+     *
+     * watchdog_hw->reason 是唯讀的,軟體清不掉,而載入器是用「跳」的、
+     * 自己從不重置晶片 —— 所以這個值會原封不動地傳給專題,它讀到的跟
+     * 沒有載入器時一模一樣。
+     *
+     * 冷開機(含按實體 RESET 拉 RUN 腳)時 reason 為 0,照常顯示選單 ——
+     * 這正是原始需求「冷開機一律先進載入器選單」。
+     */
+    if (watchdog_hw->reason && app_present() && gpio_get(BTN_PIN_B)) {
+        launch_app();
     }
 
     lcd_init();
