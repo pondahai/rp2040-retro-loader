@@ -223,8 +223,13 @@ static bool scan_card(void)
      * 卡在哪一步 —— 這比事後猜有用得多。
      */
     status(" Init SD card...", C_GREY, C_BLACK);
-    if (!sd_init()) {
-        status(" SD init FAILED", C_WHITE, C_RED);
+    sd_result_t sr = sd_init();
+    if (sr != SD_OK) {
+        char line[LCD_COLS + 1];
+        sb_t b; sb_init(&b, line, sizeof(line));
+        sb_str(&b, " SD init FAILED: ");
+        sb_str(&b, sd_result_str(sr));
+        status(line, C_WHITE, C_RED);
         return false;
     }
 

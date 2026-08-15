@@ -27,7 +27,8 @@
 #define SD_PIN_SCK       10
 #define SD_PIN_MOSI      11
 #define SD_PIN_MISO      12
-#define SD_SPI_SLOW_HZ   (400 * 1000)
+/* infones 用 100kHz 初始化(不是規格上限的 400kHz),沿用已知可用的值 */
+#define SD_SPI_SLOW_HZ   (100 * 1000)
 #define SD_SPI_FAST_HZ   (25 * 1000 * 1000)
 
 /* ---- 按鍵: 全部 active-low, 內部上拉 ---- */
