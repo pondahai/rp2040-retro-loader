@@ -18,6 +18,10 @@ cmake-build-*/
 *.jpeg
 *.png
 
+# 例外: 背景牆的來源 logo。它是 tools/make_bgtile.py 的輸入,而產物
+# loader/bgtile.h 要編進載入器 —— 沒有它就沒辦法重調磁磚尺寸與濃淡。
+!logo.jpg
+
 # 專題的資料檔(如 DOOM 的 doom1.whx)。同樣跟載入器原始碼無關,
 # 而且動輒 1-2MB —— 要用就從各專題自己的 repo 複製一份過來。
 *.whx
