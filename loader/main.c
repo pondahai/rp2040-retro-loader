@@ -150,7 +150,13 @@ static void on_progress(uint32_t done, uint32_t total)
     char line[LCD_COLS + 1];
     unsigned pct = total ? (unsigned)(done * 100u / total) : 0;
     sb_t b; sb_init(&b, line, sizeof(line));
-    sb_str(&b, " WRITING FLASH  ");
+    /*
+     * flash 裡本來就是這一份的話一個 sector 都不會被抹寫,這時喊 WRITING
+     * 是騙人的 —— 那種情況下拔電不會壞事。一旦真的寫下去就翻成 WRITING
+     * 並且不會再翻回來,因為從那一刻起中途斷電就會留下半個 image。
+     * 兩個字串等長,才不會在原地留下上一輪的殘字。
+     */
+    sb_str(&b, uf2_sectors_written ? " WRITING FLASH  " : " VERIFYING      ");
     sb_uint(&b, pct, 3);
     sb_str(&b, "%  (");
     sb_uint(&b, (unsigned)done, 0);
