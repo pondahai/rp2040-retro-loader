@@ -78,13 +78,13 @@ ninja -C build
 build 過程會印出兩者的大小（以下是實測值，非估計）：
 
 ```
--- loader: 13544 / 16384 bytes (82%, 剩 2840)
--- trampoline: 5536 / 16384 bytes (33%, 剩 10848)
+-- loader: 11968 / 16384 bytes (73%, 剩 4416)
+-- trampoline: 2820 / 16384 bytes (17%, 剩 13564)
 ```
 
 超過 16KB 的話 **build 會直接失敗**（`tools/check_size.cmake`）。這是刻意的——超出去只會蓋到專題本體，症狀是「燒進去之後開機沒反應」，很難查。
 
-載入器只剩 2840 bytes 餘裕，加功能前先看這個數字。
+加功能前先看剩餘 bytes 這個數字。改成純圖形 cover-flow 選單之後餘裕反而變大了（先前是 13544 bytes、只剩 2840）。
 
 ---
 
@@ -133,7 +133,10 @@ python tools/merge_uf2.py build/trampoline.uf2 infones.uf2 -o infones_standalone
 
 ### 3.4 改造其他專題時的檢查清單
 
-infones 是第一個改造的專題，以下是實際踩出來的順序。改 doom / apple2 / arcade 時照著走。
+infones 是第一個改造的專題，以下是實際踩出來的順序。改其他專題時照著走。
+
+> 清單寫成的時候只有 infones 一個樣本，後來 apple2 證明它**不夠用**——見 §9「第二個專題」。動手前先讀那一段，特別是「① 應該先問這個專題用什麼 build 系統」與「② 應該確認 APP_BASE 第一個 byte 就是向量表」。
+> 附帶大量資料的專題（如 DOOM 的 WAD）另見 §3.6。
 
 **① 換 linker script** — 用 `tools/gen_app_ld.py` 生成，不要手寫（§3.1）。
 
@@ -414,7 +417,7 @@ BOOTSEL 按鈕才能重燒，機殼按不到那顆按鈕的話就等於磚了。
 
 ### 已驗證（在本機實際跑過）
 
-- **編譯通過**：SDK 2.2.0 + GCC 14.2.1，loader 13544 bytes、trampoline 5536 bytes，都在 16KB 內
+- **編譯通過**：SDK 2.2.0 + GCC 14.2.1，loader 11968 bytes、trampoline 2820 bytes，都在 16KB 內（2026-08-16 實測；cover-flow 選單之前是 13544 / 5536）
 - **`memmap_app.ld` 正確**：用一個最小測試專案編出來，`objdump` 確認 `.text` 落在 `0x10004000`、**沒有 `.boot2` 段**、向量表在最前面（SP `0x20042000`、Reset `0x100040f7`，Thumb bit 已設）——正好符合 `app_present()` 的檢查條件
 - **合併與丟棄規則**：`merge_uf2.py` 把真實的 trampoline.uf2 + 偏移版 app.uf2 合成 47 塊，流水號重編正確；模擬載入器的規則後，22 塊跳板被丟棄、25 塊從 `0x10004000` 開始寫入
 - **工具會擋錯**：用預設 linker script 編的 app 會被 `merge_uf2.py` 拒絕
@@ -455,9 +458,9 @@ infones 燒 ROM 並 watchdog 重置 → 載入器認出是軟重置,無聲穿透
 - 從 SD 讀 UF2、丟棄 `target_addr < APP_BASE` 的 block、寫進 flash
 - 交棒，以及軟重置穿透
 
-### 已驗證（第二個專題：PicoApple2，實機，2026-08-15）
+### 已驗證（第二個專題：PicoApple2，實機，2026-08-15～16）
 
-[pondahai/PicoApple2](https://github.com/pondahai/PicoApple2) 已改造完成，跳板路線與載入器路線**都實機跑通**（開機進 Apple II 畫面、字形正常）。
+[pondahai/PicoApple2](https://github.com/pondahai/PicoApple2) 已改造完成，跳板路線與載入器路線**都實機跑通**（開機進 Apple II 畫面、字形正常），**磁碟讀寫也正常**——也就是專題自己的 SD 卡 I/O 不受 flash 佈局位移影響。
 改造內容見該倉庫 README 的「搭配開機載入器」一章與 `loader_offset/`。
 
 這次改造反過來檢驗了 §3.4 的清單，結論分三塊：
@@ -495,7 +498,8 @@ arduino-pico 的 linker script 是 build 期由 `simplesub.py` 從
 - 開機按住 B 強制顯示選單的保險
 - 燒錄中途失敗、UF2 損毀、SD 卡中途拔出等錯誤路徑
 - 多個 `.uf2` 時的捲動與長按重複
-- doom / arcade 還沒改造（apple2 已完成並實機驗證，見下）
+- makecode arcade 還沒改造（infones / apple2 / doom 都已改造完成）
+- **doom 的改造沒有實機驗證紀錄**。§3.6 記的是做法與空間計算，其中「寫入約 2MB 要等 30–45 秒」是估計值不是實測。跑過的人請回來補這一段
 
 ### 一個還沒解釋清楚的現象
 

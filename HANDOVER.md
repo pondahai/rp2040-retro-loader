@@ -9,8 +9,11 @@
 ## 1. 一句話現況
 
 RP2040 掌機的開機載入器：冷開機進選單、從 SD 卡選一個 `.uf2` 燒進 flash、交棒執行。
-**載入器與 infones 的整條鏈已通過實機驗證**，載入器 14256 / 16384 bytes（87%）；
-目前只改造過 infones 一個專題，doom / apple2 / arcade 尚未動工。
+**載入器與 infones 的整條鏈已通過實機驗證**，載入器 11968 / 16384 bytes（73%，剩 4416）。
+
+已改造的專題：**infones**（實機驗證）、**apple2**（實機驗證，含磁碟讀寫）、
+**doom**（已改造，見 README §3.6；**沒有實機驗證紀錄**）。
+**makecode arcade 尚未動工。**
 
 ---
 
@@ -30,8 +33,10 @@ RP2040 掌機的開機載入器：冷開機進選單、從 SD 卡選一個 `.uf2
 | 位置 | 內容 | 什麼時候讀 |
 |---|---|---|
 | `README.md` §1 | flash 佈局與整個設計的關鍵那一句 | **必讀**，不懂這段後面都看不懂 |
-| `README.md` §3.4 | 改造專題的檢查清單 | 要改 doom / apple2 就必讀 |
+| `README.md` §3.4 | 改造專題的檢查清單 | 要改新專題就必讀 |
 | `README.md` §3.5 | infones 踩到的三個坑 | 同上，這是清單的由來 |
+| `README.md` §3.6 | 附帶大量資料的專題（DOOM 的 WAD） | 專題的資料不只一段時 |
+| `README.md` §9「第二個專題」 | apple2 證明清單不夠用的地方 | **改新專題必讀**，比 §3.4 本身還重要 |
 | `README.md` §4.1 | 軟重置穿透的行為與理由 | 要碰 `main()` 的開機流程就必讀 |
 | `README.md` §9 | 驗證狀態（已驗證 / 未驗證分開列） | 動手前先確認你要碰的東西驗證到什麼程度 |
 | `common/boot_map.h` | 所有位址的單一事實來源 | 要動位址就必讀 |
@@ -141,8 +146,8 @@ picotool save -r 0x10004000 0x10004020 readback.bin
 
 ### 8.2 ~~改造第二個專題（doom 或 apple2）~~ ✅ apple2 已完成
 
-2026-08-15 完成 [pondahai/PicoApple2](https://github.com/pondahai/PicoApple2) 的改造，
-跳板路線與載入器路線都實機跑通。詳見 README §9 的「第二個專題」一段。
+2026-08-15～16 完成 [pondahai/PicoApple2](https://github.com/pondahai/PicoApple2) 的改造，
+跳板路線、載入器路線與磁碟讀寫都實機跑通。詳見 README §9 的「第二個專題」一段。
 
 **最大的收穫是清單本身不夠用**：它假設專題是 pico-sdk CMake 專案，而 PicoApple2 是
 arduino-cli + arduino-pico，換 linker script 的機制完全不同；更要命的是 arduino-pico
@@ -152,18 +157,31 @@ arduino-cli + arduino-pico，換 linker script 的機制完全不同；更要命
 反倒是清單裡「最容易漏掉」的第 ③ 項在這裡完全不適用——PicoApple2 的磁碟映像走 SD 卡，
 flash 上只有 image 本身。
 
-**改 doom 之前先讀 README §9 那一段。**
+**改新專題之前先讀 README §9 那一段。**
 
-### 8.2b 改造 doom / arcade
+### 8.2b ~~改造 doom~~ ✅ 已完成（但未實機驗證）
 
-**照 README §3.4 的清單走。** 那份清單就是為此寫的，第二個專題也會反過來檢驗
-清單夠不夠用。
+doom 已改造，做法記在 **README §3.6**：韌體與 1.7MB 的 WAD 分成兩段，用
+`tools/bin2uf2.py` 把 WAD 包成 UF2，再與跳板三段合併成單一 `DOOM.uf2`。
+`TINY_WAD_ADDR` 跟著位移 16KB（`0x10042000` → `0x10046000`）——這正是清單
+第 ③ 項，DOOM 上真的會發作。
 
-**最容易漏掉的是第 ③ 項**：專題寫死的 flash 位址不會跟著 linker script 位移。
-infones 就是踩在這裡（`NES_FILE_ADDR`），症狀是黑畫面且極難查。
+**⚠️ §9 沒有 doom 的實機驗證紀錄。** §3.6 裡「寫入約 2MB 要等 30–45 秒」是
+估計值不是實測。跑過的人請回來補 §9。
 
-> **DOOM 特別注意**：它的空間比 infones 更緊。動手前先確認 image 尾端離
-> 它自己的資料區還剩多少 —— 位移 16KB 之後可能直接撞上。
+空間確實很緊，位移後只剩 10088 bytes 餘裕（原本 26472）——韌體再長一點就撞
+flash 尾端。`bin2uf2.py` 與 `merge_uf2.py` 都會擋掉越界與重疊，不會安靜出錯。
+
+### 8.2c 改造 makecode arcade
+
+**照 README §3.4 的清單走，但先讀 §9「第二個專題」。** 清單是照 infones 寫的，
+apple2 證明它有兩個盲點：① 沒問「這個專題用什麼 build 系統」（清單假設
+pico-sdk CMake）；② 只說「丟掉 boot2」而沒說「確認 `APP_BASE` 第一個 byte
+就是向量表」。
+
+**最容易漏掉的仍是第 ③ 項**：專題寫死的 flash 位址不會跟著 linker script 位移。
+infones 踩在 `NES_FILE_ADDR`，doom 踩在 `TINY_WAD_ADDR`，兩次症狀都是黑畫面且
+極難查。（apple2 是唯一不適用的——它的資料全在 SD 卡上。）
 
 ### 8.3 ~~合併 infones 的 PR #12~~ ✅ 已完成
 
