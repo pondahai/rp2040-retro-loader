@@ -19,6 +19,13 @@ typedef void (*uf2_progress_fn)(uint32_t done, uint32_t total);
 
 uf2_result_t uf2_flash_file(const fl_entry_t *e, uf2_progress_fn on_progress);
 
+/*
+ * 這一輪實際抹寫過的 sector 數。全 0 代表 flash 裡本來就是這一份,期間拔電
+ * 也不會壞事 —— 進度畫面靠它決定要說 VERIFYING 還是 WRITING FLASH。
+ * uf2_flash_file() 進入時歸零。
+ */
+extern uint32_t uf2_sectors_written;
+
 const char *uf2_result_str(uf2_result_t r);
 
 #endif /* FLASHER_H */

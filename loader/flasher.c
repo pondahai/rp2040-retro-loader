@@ -19,12 +19,25 @@
 #define SECTOR_SIZE 4096u
 #define NO_SECTOR   0xFFFFFFFFu
 
+uint32_t uf2_sectors_written;
+
 static uint8_t  sector_buf[SECTOR_SIZE];
 static uint32_t sector_off = NO_SECTOR;   /* 目前緩衝中的 sector, 以 flash offset 表示 */
 
 static void sector_flush(void)
 {
     if (sector_off == NO_SECTOR) return;
+
+    /*
+     * flash 裡已經是同一份就別重寫。重選同一個專題是最常見的操作,而每個
+     * sector 的抹寫壽命只有十萬次量級 —— 省下來的不只是時間,是板子的命。
+     * 中途斷電留下的半個 image 也會因此只補寫真正壞掉的那幾塊。
+     */
+    if (memcmp((const uint8_t *)(FLASH_XIP_BASE + sector_off),
+               sector_buf, SECTOR_SIZE) == 0) {
+        sector_off = NO_SECTOR;
+        return;
+    }
 
     /*
      * flash_range_erase/program 本身是在 RAM 執行的,但期間 XIP 會被關掉,
@@ -35,6 +48,8 @@ static void sector_flush(void)
     flash_range_erase(sector_off, SECTOR_SIZE);
     flash_range_program(sector_off, sector_buf, SECTOR_SIZE);
     restore_interrupts(save);
+
+    uf2_sectors_written++;
 
     sector_off = NO_SECTOR;
 }
@@ -66,6 +81,7 @@ uf2_result_t uf2_flash_file(const fl_entry_t *e, uf2_progress_fn on_progress)
 
     fl_open(e, &f);
     sector_off = NO_SECTOR;
+    uf2_sectors_written = 0;
 
     while (fl_read_sector(&f, (uint8_t *)&blk)) {
         done++;
