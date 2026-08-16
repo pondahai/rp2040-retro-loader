@@ -78,7 +78,7 @@ ninja -C build
 build 過程會印出兩者的大小（以下是實測值，非估計）：
 
 ```
--- loader: 11968 / 16384 bytes (73%, 剩 4416)
+-- loader: 12424 / 16384 bytes (75%, 剩 3960)
 -- trampoline: 2820 / 16384 bytes (17%, 剩 13564)
 ```
 
@@ -417,7 +417,7 @@ BOOTSEL 按鈕才能重燒，機殼按不到那顆按鈕的話就等於磚了。
 
 ### 已驗證（在本機實際跑過）
 
-- **編譯通過**：SDK 2.2.0 + GCC 14.2.1，loader 11968 bytes、trampoline 2820 bytes，都在 16KB 內（2026-08-16 實測；cover-flow 選單之前是 13544 / 5536）
+- **編譯通過**：SDK 2.2.0 + GCC 14.2.1，loader 12424 bytes、trampoline 2820 bytes，都在 16KB 內（2026-08-16 實測；背景牆之前是 11968，cover-flow 選單之前是 13544 / 5536）
 - **`memmap_app.ld` 正確**：用一個最小測試專案編出來，`objdump` 確認 `.text` 落在 `0x10004000`、**沒有 `.boot2` 段**、向量表在最前面（SP `0x20042000`、Reset `0x100040f7`，Thumb bit 已設）——正好符合 `app_present()` 的檢查條件
 - **合併與丟棄規則**：`merge_uf2.py` 把真實的 trampoline.uf2 + 偏移版 app.uf2 合成 47 塊，流水號重編正確；模擬載入器的規則後，22 塊跳板被丟棄、25 塊從 `0x10004000` 開始寫入
 - **工具會擋錯**：用預設 linker script 編的 app 會被 `merge_uf2.py` 拒絕
@@ -457,6 +457,9 @@ infones 燒 ROM 並 watchdog 重置 → 載入器認出是軟重置,無聲穿透
 - ILI9341 文字模式與選單 UI、按鍵
 - 從 SD 讀 UF2、丟棄 `target_addr < APP_BASE` 的 block、寫進 flash
 - 交棒，以及軟重置穿透
+- **選單背景牆**（2026-08-16）：1bpp logo 磁磚交錯鋪滿畫面，封面帶的縫隙也是背景。
+  滑動動畫的流暢度沒有變化——背景是在「本來就要送出去的掃描線」裡合成的，
+  SPI 流量一個 byte 都沒有多
 
 ### 已驗證（第二個專題：PicoApple2，實機，2026-08-15～16）
 

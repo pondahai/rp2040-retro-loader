@@ -1,8 +1,10 @@
+#include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "board.h"
 #include "lcd.h"
 #include "font8x8.h"
+#include "bgtile.h"
 
 /* ILI9341 / DCS 指令,名稱沿用 infones main.cpp 的寫法方便對照 */
 #define DCS_SOFT_RESET          0x01
@@ -97,6 +99,38 @@ void lcd_clear(uint16_t bg)
     }
     set_window(0, 0, LCD_W - 1, LCD_H - 1);
     for (int y = 0; y < LCD_H; y++) {
+        wr_data(line, sizeof(line));
+    }
+}
+
+void lcd_bg_scanline(int y, uint8_t *line)
+{
+    /* 交錯排列: 奇數列的磁磚往右推半塊,才不會排成呆板的方格 */
+    int off = ((y / BGTILE_H) & 1) ? BGTILE_W / 2 : 0;
+    const uint8_t *row = bgtile[y % BGTILE_H];
+
+    /* 先展開一塊磁磚寬(已含位移),整條線剩下的就只是重複的 memcpy */
+    uint8_t tile[BGTILE_W * 2];
+    for (int x = 0; x < BGTILE_W; x++) {
+        int tx = (x + off) % BGTILE_W;
+        uint16_t c = ((row[tx >> 3] >> (tx & 7)) & 1) ? C_BGINK : C_BGPAPER;
+        tile[x * 2]     = c >> 8;
+        tile[x * 2 + 1] = c & 0xff;
+    }
+
+    for (int x = 0; x < LCD_W * 2; x += (int)sizeof(tile)) {
+        int n = LCD_W * 2 - x;
+        if (n > (int)sizeof(tile)) n = (int)sizeof(tile);
+        memcpy(line + x, tile, (size_t)n);
+    }
+}
+
+void lcd_clear_bg(void)
+{
+    uint8_t line[LCD_W * 2];
+    set_window(0, 0, LCD_W - 1, LCD_H - 1);
+    for (int y = 0; y < LCD_H; y++) {
+        lcd_bg_scanline(y, line);
         wr_data(line, sizeof(line));
     }
 }

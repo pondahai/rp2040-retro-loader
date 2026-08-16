@@ -263,7 +263,7 @@ static void run_selected(void)
 /* 回到選單: 整個畫面重來一次,把上一輪的文字清乾淨 */
 static void show_menu(void)
 {
-    lcd_clear(C_WHITE);
+    lcd_clear_bg();
     cf_draw(entries, entry_count, cursor);
 }
 
@@ -316,7 +316,7 @@ int main(void)
     }
 
     lcd_init();
-    lcd_clear(C_WHITE);
+    lcd_clear_bg();
 
     if (!scan_card() || entry_count == 0) {
         fatal(msg_no_uf2);
@@ -340,7 +340,7 @@ int main(void)
             /* 只有燒錄失敗才會回到這裡 */
             show_menu();
         } else if (p & (1u << B_B)) {
-            lcd_clear(C_WHITE);
+            lcd_clear_bg();
             if (!scan_card() || entry_count == 0) {
                 fatal(msg_no_uf2);
             }

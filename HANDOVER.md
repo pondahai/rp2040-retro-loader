@@ -2,14 +2,14 @@
 
 給接手這個專案的新對話串。**先讀這份，再依指引去讀 README 的對應章節與程式碼。**
 
-最後更新：2026-08-15
+最後更新：2026-08-16
 
 ---
 
 ## 1. 一句話現況
 
 RP2040 掌機的開機載入器：冷開機進選單、從 SD 卡選一個 `.uf2` 燒進 flash、交棒執行。
-**載入器與 infones 的整條鏈已通過實機驗證**，載入器 11968 / 16384 bytes（73%，剩 4416）。
+**載入器與 infones 的整條鏈已通過實機驗證**，載入器 12424 / 16384 bytes（75%，剩 3960）。
 
 已改造的專題：**infones**（實機驗證）、**apple2**（實機驗證，含磁碟讀寫）、
 **doom**（已改造，見 README §3.6；**沒有實機驗證紀錄**）。
@@ -67,12 +67,14 @@ RP2040 掌機的開機載入器：冷開機進選單、從 SD 卡選一個 `.uf2
 | `loader/flasher.c` | UF2 解析與燒錄。**丟棄跳板那一句在這裡** |
 | `loader/sdspi.c` | SD 驅動，序列照 infones 的 FatFs 範例抄 |
 | `loader/fatlite.c` | 唯讀 FAT16/32，只看根目錄 |
-| `loader/lcd.c` | ILI9341 文字模式 40×30 |
+| `loader/lcd.c` | ILI9341 文字模式 40×30，以及選單的背景牆（`lcd_bg_scanline()`） |
+| `loader/bgtile.h` | **生成的,不要手改**，背景牆的 1bpp logo 磁磚（64×32 = 256 bytes） |
 | `loader/board.h` | 腳位，**必須跟 infones 一致** |
 | `trampoline/trampoline.c` | 32 行，只做交棒 |
 | `app/memmap_app.ld` | **生成的，不要手改**，見 `tools/gen_app_ld.py` |
 | `tools/merge_uf2.py` | 跳板 + 本體 → 單一 UF2，並用 `0xFF` 補滿中間的空隙（`pad_gap()`，見 README §3.5 坑 3） |
 | `tools/check_size.cmake` | 超過 16KB 讓 build 失敗 |
+| `tools/make_bgtile.py` | logo 圖 → `loader/bgtile.h`。來源圖不進版控（`.gitignore` 排除 `*.jpg`），要重調就自己準備一張 |
 
 ---
 

@@ -73,8 +73,12 @@ static void render(const fl_entry_t *entries, int count, int centre, int shift)
     lcd_blit_begin(0, STRIP_Y, LCD_W, THUMB_H);
 
     for (int y = 0; y < THUMB_H; y++) {
-        /* 0xFF 填滿剛好就是白色(RGB565 的 0xFFFF),省一個迴圈 */
-        memset(line, 0xFF, sizeof(line));
+        /*
+         * 底色是背景牆而不是純白 —— 封面之間本來就有縫,那些縫要跟畫面
+         * 其他地方接得起來。成本是幾個 memcpy,相對這一幀要送出去的 61KB
+         * 可以忽略。
+         */
+        lcd_bg_scanline(STRIP_Y + y, line);
 
         for (int i = 0; i < n; i++) {
             int src_x = 0, dst_x = x0[i], w = THUMB_W;
