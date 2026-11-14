@@ -326,6 +326,15 @@ int main(void)
         launch_app();
     }
 
+    /*
+     * 走到這裡就一定會顯示選單。如果這次開機是 watchdog 重置造成的(按住 B、
+     * 或專題要求回選單),reason 仍然非 0 而且清不掉,之後從選單選的專題會讀到
+     * 它。把 scratch[4] 清掉,讓用 watchdog_enable_caused_reboot() 判斷「是不是
+     * 我自己重置的」的專題(infones)得到 false —— pico-sdk 的 watchdog_enable()
+     * 會在 scratch[4] 寫魔術數字,這個函式就是靠它分辨。
+     */
+    watchdog_hw->scratch[4] = 0;
+
     lcd_init();
     lcd_clear_bg();
 

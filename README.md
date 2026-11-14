@@ -364,6 +364,12 @@ watchdog_reboot(0, 0, 10);
 - 載入器讀到就清成 0，不會殘留到下一次重置。
 - 定義在 `common/boot_map.h`，專題直接 include 這一份，不要自己複製數字。
 - 成本：載入器 +16 bytes。
+
+#### 副作用：`reason` 會帶進選單之後選的專題
+
+載入器是用「跳」的交棒，不重置晶片，所以 watchdog 重置後顯示選單（按住 B、或 `RETRO_MSG_SHOW_MENU`），`watchdog_hw->reason` 會一路帶給使用者接著選的專題。用 `watchdog_caused_reboot()` 判斷「我是不是剛自己重置」的專題會誤判 —— infones 就曾因此直接跑上次的遊戲，而不是顯示自己的選單。
+
+處理方式：載入器**只要顯示選單，就把 `scratch[4]` 清成 0**；專題改用 pico-sdk 的 `watchdog_enable_caused_reboot()`（同時檢查 `reason` 與 `watchdog_enable()` 留在 `scratch[4]` 的魔術數字）。infones 已改。新專題若要靠 watchdog 重置切換狀態，也請用這個函式。成本：載入器再 +8 bytes。
 （B 在選單裡是「重新掃描」，開機時則是「強制顯示選單」。）
 
 ---
