@@ -22,7 +22,7 @@
 #define usb_hw_set   ((usb_hw_t *)hw_set_alias_untyped(usb_hw))
 #define usb_hw_clear ((usb_hw_t *)hw_clear_alias_untyped(usb_hw))
 
-#define PROTO_VER '1'
+#define PROTO_VER '2'   /* 2: output report 加長成 32 byte,新增 'L' */
 
 /* ------------------------------------------------------------ 描述元 */
 
@@ -45,6 +45,7 @@ static const uint8_t desc_report[] = {
     0x15, 0x00, 0x26, 0xFF, 0x00, /* Logical 0..255 */
     0x75, 0x08, 0x95, 0x08,     /* 8 x 8 bit */
     0x09, 0x01, 0x81, 0x02,     /* Input  (Data,Var,Abs) */
+    0x95, USBCMD_OUT_LEN,       /* 32 x 8 bit */
     0x09, 0x01, 0x91, 0x02,     /* Output (Data,Var,Abs) */
     0xC0,                       /* End Collection */
 };
@@ -59,6 +60,7 @@ static const uint8_t desc_config[34] = {
 /* ------------------------------------------------------------ 狀態 */
 
 static volatile uint8_t pending_cmd;
+static char     cmd_arg[USBCMD_OUT_LEN];   /* 指令後面的字串,最後一 byte 固定 0 */
 static uint8_t  new_addr;           /* SET_ADDRESS 要等 status 階段結束才生效 */
 static bool     want_report;        /* SET_REPORT 的 data 階段正在等 */
 static bool     ep0_in_pid;         /* EP0 IN 的 DATA0/1 */
@@ -180,7 +182,10 @@ void isr_usbctrl(void)
         if (b & 2u) {                               /* EP0 OUT 完成 */
             if (want_report) {
                 want_report = false;
-                pending_cmd = usb_dpram->ep0_buf_a[0];
+                const volatile uint8_t *d = usb_dpram->ep0_buf_a;
+                for (int i = 1; i < USBCMD_OUT_LEN; i++) cmd_arg[i - 1] = (char)d[i];
+                cmd_arg[USBCMD_OUT_LEN - 1] = 0;
+                pending_cmd = d[0];
                 ep0_zlp();
             }
         }
@@ -227,6 +232,11 @@ void usbcmd_stop(void)
     usb_hw_clear->sie_ctrl = USB_SIE_CTRL_PULLUP_EN_BITS; /* 電腦看到拔除 */
     reset_block(RESETS_RESET_USBCTRL_BITS);
     nvic_hw->icpr = 1u << USBCTRL_IRQ;
+}
+
+const char *usbcmd_arg(void)
+{
+    return cmd_arg;
 }
 
 uint8_t usbcmd_take(void)

@@ -292,11 +292,23 @@ static bool name_is(const char *a, const char *b)
     return *a == *b;
 }
 
-/* 電腦端要求「掛載 SD」: 等同使用者在選單選了 SDMOUNT 按 A */
-static void cmd_mount(void)
+/*
+ * 電腦端要求啟動某個檔案: 等同使用者在選單選了它按 A。
+ * name 可以省略 .UF2。找不到就回 NONE 並在畫面提示。
+ */
+static void cmd_launch(const char *name)
 {
     for (int i = 0; i < entry_count; i++) {
-        if (name_is(entries[i].name, sdmount_name)) {
+        const char *e = entries[i].name;
+        /* 完全相同,或 e 是 name 加上 ".UF2" */
+        const char *a = e, *b = name;
+        for (; *a && *b; a++, b++) {
+            char x = *a, y = *b;
+            if (x >= 'a' && x <= 'z') x -= 32;
+            if (y >= 'a' && y <= 'z') y -= 32;
+            if (x != y) break;
+        }
+        if (*b == 0 && (*a == 0 || name_is(a, ".UF2"))) {
             usbcmd_reply(FOURCC('O', 'K', ' ', ' '));
             sleep_ms(50);           /* 讓主機用 interrupt IN 把回覆收走 */
             cursor = i;
@@ -306,7 +318,7 @@ static void cmd_mount(void)
         }
     }
     usbcmd_reply(FOURCC('N', 'O', 'N', 'E'));
-    lcd_puts_line(LCD_ROWS - 2, " SDMOUNT.UF2 is not on the SD card.", C_WHITE, C_RED);
+    lcd_puts_line(LCD_ROWS - 2, " File is not on the SD card.", C_WHITE, C_RED);
     sleep_ms(2000);
     lcd_clear_bg();
     cf_draw(entries, entry_count, cursor);
@@ -416,7 +428,9 @@ int main(void)
         if (c == 'P') {
             usbcmd_reply(FOURCC('P', 'R', 'T', 'L'));
         } else if (c == 'M') {
-            cmd_mount();
+            cmd_launch(sdmount_name);
+        } else if (c == 'L') {
+            cmd_launch(usbcmd_arg());
         }
 
         sleep_ms(16);
