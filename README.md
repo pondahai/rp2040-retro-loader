@@ -328,6 +328,7 @@ BOOTSEL 按鈕才能重燒，機殼按不到那顆按鈕的話就等於磚了。
 | 按實體 RESET（拉 RUN 腳） | 0 | 顯示選單 |
 | 軟重置（watchdog、`picotool reboot`） | ≠0 | **直接跳到 `0x10004000`**，不顯示選單、不重燒 |
 | 軟重置但開機時按住 B | ≠0 | 顯示選單（保險） |
+| 軟重置，且 `scratch[0]` 帶 `RETRO_MSG_SHOW_MENU` | ≠0 | 顯示選單（專題主動要求，見 §4.2） |
 
 **為什麼需要這個。** 有些專題用「重置晶片」來切換自己的狀態。infones 就是這樣：
 它的選單選好遊戲後把 ROM 燒進 flash，然後 `watchdog_enable()` 重置，
@@ -344,6 +345,25 @@ BOOTSEL 按鈕才能重燒，機殼按不到那顆按鈕的話就等於磚了。
 
 **風險與逃生口。** 如果某個專題當機後被 watchdog 重置，就會被無限穿透回去，
 永遠看不到載入器選單。三條退路：拔電、按 RESET、或**開機時按住 B**。
+
+### 4.2 專題要求「重置後回選單」
+
+穿透規則讓專題沒辦法用軟體自己回到選單 —— watchdog 重置一律被送回專題本身。
+需要這個能力的專題（第一個是 [rp2040-retro-sdmount](https://github.com/pondahai/rp2040-retro-sdmount)：
+電腦送「完成」或按 START 就回選單），在重置前留一個訊息：
+
+```c
+#include "boot_map.h"
+watchdog_hw->scratch[RETRO_MSG_SCRATCH] = RETRO_MSG_SHOW_MENU;
+watchdog_reboot(0, 0, 10);
+```
+
+- 用 `watchdog_hw->scratch[0]`：pico-sdk 把 `scratch[0..3]` 保留給使用者，`[4..7]` 是它與 bootrom 自用。
+- 高 16 bit 是魔術數字 `0x5254`（'RT'），不符合就當作沒有訊息，所以**不影響任何沒寫這個值的專題**
+  （infones、PicoApple2 的 watchdog 行為不變）。
+- 載入器讀到就清成 0，不會殘留到下一次重置。
+- 定義在 `common/boot_map.h`，專題直接 include 這一份，不要自己複製數字。
+- 成本：載入器 +16 bytes。
 （B 在選單裡是「重新掃描」，開機時則是「強制顯示選單」。）
 
 ---

@@ -311,7 +311,18 @@ int main(void)
      * 冷開機(含按實體 RESET 拉 RUN 腳)時 reason 為 0,照常顯示選單 ——
      * 這正是原始需求「冷開機一律先進載入器選單」。
      */
-    if (watchdog_hw->reason && app_present() && gpio_get(BTN_PIN_B)) {
+    /*
+     * 例外: 專題在重置前留了「回選單」的訊息(boot_map.h 的 RETRO_MSG_*)。
+     * 讀完就清掉,下一次 watchdog 重置恢復原本的穿透行為。
+     * 目前只有一種訊息,所以任何帶魔術數字的值都當成「顯示選單」。
+     */
+    uint32_t msg = watchdog_hw->scratch[RETRO_MSG_SCRATCH];
+    bool want_menu = (msg & RETRO_MSG_MASK) == RETRO_MSG_MAGIC;
+    if (want_menu) {
+        watchdog_hw->scratch[RETRO_MSG_SCRATCH] = 0;
+    }
+
+    if (!want_menu && watchdog_hw->reason && app_present() && gpio_get(BTN_PIN_B)) {
         launch_app();
     }
 
