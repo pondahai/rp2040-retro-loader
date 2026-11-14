@@ -26,6 +26,7 @@
 #include "flasher.h"
 #include "thumb.h"
 #include "coverflow.h"
+#include "usbcmd.h"
 
 /* ----------------------------------------------------------- 字串工具 */
 /*
@@ -227,6 +228,10 @@ static void run_selected(void)
 {
     const fl_entry_t *e = &entries[cursor];
 
+    /* 燒錄期間 XIP 會關掉,而 USB 的 IRQ handler 住在 flash 裡;
+     * 交棒後專題也要拿到乾淨的 USB 控制器。所以一律先關。 */
+    usbcmd_stop();
+
     lcd_clear(C_WHITE);
     lcd_puts_line(4, " Loading:", C_GREY, C_WHITE);
     lcd_puts_line(5, e->name, C_BLACK, C_WHITE);
@@ -260,9 +265,49 @@ static void run_selected(void)
     launch_app();
 }
 
-/* 回到選單: 整個畫面重來一次,把上一輪的文字清乾淨 */
+/* 回到選單: 整個畫面重來一次,把上一輪的文字清乾淨。
+ * USB 指令通道只在選單顯示時開(見 usbcmd.h)。 */
 static void show_menu(void)
 {
+    lcd_clear_bg();
+    cf_draw(entries, entry_count, cursor);
+    usbcmd_start();
+}
+
+/* ---------------------------------------------------------- USB 指令 */
+
+#define FOURCC(a, b, c, d)     ((uint32_t)(a) | (uint32_t)(b) << 8 | (uint32_t)(c) << 16 | (uint32_t)(d) << 24)
+
+/* SD 掛載 APP 的固定檔名(rp2040-retro-sdk SD-MOUNT-PLAN.md 決策 M4) */
+static const char sdmount_name[] = "SDMOUNT.UF2";
+
+static bool name_is(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = *a, y = *b;
+        if (x >= 'a' && x <= 'z') x -= 32;
+        if (y >= 'a' && y <= 'z') y -= 32;
+        if (x != y) return false;
+    }
+    return *a == *b;
+}
+
+/* 電腦端要求「掛載 SD」: 等同使用者在選單選了 SDMOUNT 按 A */
+static void cmd_mount(void)
+{
+    for (int i = 0; i < entry_count; i++) {
+        if (name_is(entries[i].name, sdmount_name)) {
+            usbcmd_reply(FOURCC('O', 'K', ' ', ' '));
+            sleep_ms(50);           /* 讓主機用 interrupt IN 把回覆收走 */
+            cursor = i;
+            run_selected();
+            show_menu();            /* 只有燒錄失敗才會回到這裡 */
+            return;
+        }
+    }
+    usbcmd_reply(FOURCC('N', 'O', 'N', 'E'));
+    lcd_puts_line(LCD_ROWS - 2, " SDMOUNT.UF2 is not on the SD card.", C_WHITE, C_RED);
+    sleep_ms(2000);
     lcd_clear_bg();
     cf_draw(entries, entry_count, cursor);
 }
@@ -365,6 +410,13 @@ int main(void)
                 fatal(msg_no_uf2);
             }
             show_menu();
+        }
+
+        uint8_t c = usbcmd_take();
+        if (c == 'P') {
+            usbcmd_reply(FOURCC('P', 'R', 'T', 'L'));
+        } else if (c == 'M') {
+            cmd_mount();
         }
 
         sleep_ms(16);

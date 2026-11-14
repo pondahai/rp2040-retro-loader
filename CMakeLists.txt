@@ -76,6 +76,7 @@ add_executable(loader
     loader/flasher.c
     loader/thumb.c
     loader/coverflow.c
+    loader/usbcmd.c
     common/launch.c
 )
 target_link_libraries(loader

@@ -79,7 +79,7 @@ ninja -C build
 build 過程會印出兩者的大小（以下是實測值，非估計）：
 
 ```
--- loader: 12424 / 16384 bytes (75%, 剩 3960)
+-- loader: 13768 / 16384 bytes (84%, 剩 2616)
 -- trampoline: 2820 / 16384 bytes (17%, 剩 13564)
 ```
 
@@ -373,6 +373,27 @@ watchdog_reboot(0, 0, 10);
 （B 在選單裡是「重新掃描」，開機時則是「強制顯示選單」。）
 
 ---
+
+### 4.3 USB 指令通道（選單期間）
+
+載入器**顯示選單時**會以 USB HID 裝置出現（VID:PID `CAFE:4010`，開發測試碼），讓電腦端不用碰掌機就能下指令。
+其他時候 —— 開機穿透、燒錄中、專題執行中 —— USB 一律是關的。
+
+| 指令（output report byte 0） | 回覆（input report 前 4 byte） | 動作 |
+| :--- | :--- | :--- |
+| `P` | `PRTL` | 無，確認載入器在選單 |
+| `M` | `OK  ` | 找到 `SDMOUNT.UF2`：等同在選單選它按 A（[rp2040-retro-sdmount](https://github.com/pondahai/rp2040-retro-sdmount)） |
+| `M` | `NONE` | SD 卡上沒有：畫面提示 2 秒後回選單 |
+
+第 5 個 byte 是協定版本（`'1'`）。測試工具：`python tools/usbcmd.py ping|mount`（需要 `pip install hidapi`）。
+
+- **手寫，不用 TinyUSB**（`loader/usbcmd.c`）：TinyUSB 的 device core + HID 會超過剩餘空間。這裡只做列舉、
+  一個 interrupt IN 端點，指令走 EP0 的 SET_REPORT，連 OUT 端點都不需要。不給字串描述元，Windows 會顯示成「USB 輸入裝置」。
+  成本 +1320 bytes。
+- IRQ handler 直接定義成 `isr_usbctrl`，蓋掉 crt0 向量表的 weak 符號，不拉 `hardware_irq`。
+- **燒錄與交棒前一律 `usbcmd_stop()`**：IRQ handler 住在 flash，燒錄期間 XIP 關閉；而且拉掉 D+ 上拉、
+  重置控制器，專題才能用乾淨的 USB 重新列舉（電腦會先看到載入器拔除，再看到專題插入）。
+- 和 SELECT 逃生口不衝突：`picotool reboot` 仍然不能用（這裡不是 PICOBOOT 介面）。
 
 ## 5. 為什麼是這些取捨
 
