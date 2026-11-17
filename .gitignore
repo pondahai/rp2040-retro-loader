@@ -31,3 +31,6 @@ cmake-build-*/
 .idea/
 .DS_Store
 Thumbs.db
+
+# README 用的模擬截圖要進版控
+!docs/screens/*.png

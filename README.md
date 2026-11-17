@@ -7,6 +7,16 @@ RP2040 掌機的開機載入器。冷開機進選單，列出 SD 卡上的 `.uf2
 > 接手開發請先讀 **[HANDOVER.md](HANDOVER.md)** —— 現況、待辦、踩過的坑與地雷都在那裡。
 <img width="1600" height="1568" alt="IMG_4780" src="https://github.com/user-attachments/assets/f6f748f9-f851-4860-81e1-9576d9f696f2" />
 
+### 畫面（模擬）
+
+以下不是實機截圖，是 `tools/sim_screens.py` 照 `lcd.c` / `coverflow.c` 的畫法在電腦上重畫的（燒錄進度數字是假的）：
+
+| 選單 | 選中下一張 |
+|---|---|
+| ![選單](docs/screens/01_menu_first.png) | ![選中下一張](docs/screens/02_menu_second.png) |
+| **滑動中間幀** | **燒錄中** |
+| ![滑動](docs/screens/03_slide_midframe.png) | ![燒錄](docs/screens/04_flashing.png) |
+
 ---
 
 ## 1. Flash 佈局
